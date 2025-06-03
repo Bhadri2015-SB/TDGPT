@@ -1,0 +1,6 @@
+unstructured
+pandas
+tqdm
+groq
+pdfplumber
+pydantic
