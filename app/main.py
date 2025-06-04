@@ -1,9 +1,11 @@
 from fastapi import FastAPI
-from app.api import upload
+from app.api import upload, process_initiate, dev
 
 app = FastAPI()
 
 app.include_router(upload.router, prefix="/api")
+app.include_router(process_initiate.router, prefix="/api")
+app.include_router(dev.router, prefix="/api")
 
 
 

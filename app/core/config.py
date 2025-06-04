@@ -2,6 +2,7 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 UPLOAD_ROOT = BASE_DIR / "uploads" / "unprocessed"
+PROCESSED_ROOT = BASE_DIR / "uploads" / "processed"
 
 FILE_TYPE_MAP = {
     "PDF": [".pdf"],
@@ -11,7 +12,8 @@ FILE_TYPE_MAP = {
     "Excel": [".xls", ".xlsx", ".csv"],
     "Image": [".jpg", ".jpeg", ".png", ".gif"],
     "Video": [".mp4", ".avi", ".mov"],
-    "SQL": [".sql"]
+    "SQL": [".sql"],
+    "JSON": [".json"]
 }
 
 
