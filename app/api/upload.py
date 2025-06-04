@@ -1,6 +1,10 @@
-from fastapi import APIRouter, UploadFile, File, Form
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from typing import List
 from app.utils.file_handler import save_file
+
+from app.services.github_file_extraction import get_repo_files
+from app.schemas.response_model import RepoInput
+
 
 router = APIRouter()
 
@@ -15,3 +19,14 @@ async def upload_files(owner_name: str = Form(...), files: List[UploadFile] = Fi
         "owner": owner_name,
         "saved_files": saved_paths
     }
+
+@router.post("/extract-from-github/")
+async def extract_files_from_github(data: RepoInput):
+    try:
+        result = await get_repo_files(data.repo_url)
+        return {
+            "message": "Files extracted and saved successfully.",
+            "details": result
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))

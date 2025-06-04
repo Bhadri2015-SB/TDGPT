@@ -1,6 +1,6 @@
 PROCESSOR_MAP = {
     "PDF": "extract_text_from_pdf",
-    "Word": "extract_text_from_word",
+    "Word": "extract_data_from_word",
     "Markdown": "extract_text_from_md",
     "PPT": "extract_text_from_ppt",
     "Excel": "extract_text_from_excel",
