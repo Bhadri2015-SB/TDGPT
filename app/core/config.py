@@ -12,7 +12,8 @@ FILE_TYPE_MAP = {
     "Excel": [".xls", ".xlsx", ".csv"],
     "Image": [".jpg", ".jpeg", ".png", ".gif"],
     "Video": [".mp4", ".avi", ".mov"],
-    "SQL": [".sql"],
+    "SQLITE": [".sqlite", ".db", ".sqlite3"],
+    "SQL_SCRIPT": [".sql"],
     "JSON": [".json"]
 }
 
