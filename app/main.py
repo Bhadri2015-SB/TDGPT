@@ -1,13 +1,28 @@
 from fastapi import FastAPI
-from app.api import upload, process_initiate, dev
+
+from app.api.v1.endpoints import upload, process_initiate, dev, user_route
+from app.db.session import Base, engine  # ✅ Make sure this imports the Base with models attached
+from app.models import models  # ✅ This line ensures all models are registered with Base
 
 app = FastAPI()
 
+# Register routers
 app.include_router(upload.router, prefix="/api")
 app.include_router(process_initiate.router, prefix="/api")
 app.include_router(dev.router, prefix="/api")
+app.include_router(user_route.router)
 
 
+@app.on_event("startup")
+async def startup_event():
+    # ✅ Ensure models are imported BEFORE creating tables
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    await engine.dispose()
 
 
 

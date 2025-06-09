@@ -49,3 +49,11 @@ async def remove_old_folder(owner_dir):
             owner_dir.rmdir()
         except Exception as e:
             print(f"Failed to remove owner directory {owner_dir}: {e}")
+
+
+async def get_file_size(file: UploadFile) -> int:
+    file.file.seek(0, 2)  # Move to end of file
+    size = file.file.tell()
+    file.file.seek(0)     # Reset to beginning
+    return size
+

@@ -17,6 +17,10 @@ FILE_TYPE_MAP = {
     "JSON": [".json"]
 }
 
+SECRET_KEY="sas77a4w57iauhiy4r"
+ACCESS_TOKEN_EXPIRE_MINUTES=30
+ALGORITHM="HS256"
+
 
 # Create folders if not exist
 # for folder in [IMAGE_DIR, DOC_DIR, OTHER_DIR]:
