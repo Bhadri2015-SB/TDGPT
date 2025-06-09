@@ -55,6 +55,9 @@ async def process_images(image_dir):
         await f.write(json.dumps(results, indent=2, ensure_ascii=False))
 
     print("Image descriptions saved to img_vision/image_descriptions.json")
+def extract_text_from_image(file_path):
+    return "Image text extraction not implemented yet"
+
 
 if __name__ == "__main__":
     asyncio.run(process_images("output/images"))

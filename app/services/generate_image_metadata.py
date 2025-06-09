@@ -8,6 +8,7 @@ from app.services.image_caption import describe_image
 from app.core.config import OUTPUT_DIRECTORY, GROQ_API_KEY, GROQ_MODEL
 from groq import Groq
 import asyncio
+from app.core.groq_setup import groq_client, GROQ_MODEL
 
 def encode_image_base64(image_path: str) -> str:
     with open(image_path, "rb") as img_file:
@@ -16,7 +17,7 @@ def encode_image_base64(image_path: str) -> str:
         return f"data:image/{ext};base64,{encoded}"
 
 async def generate_full_image_data_async():
-    groq_client = Groq(api_key=GROQ_API_KEY)
+    
     OUTPUT_JSON_DIR = OUTPUT_DIRECTORY
     IMG_VISION_DIR = os.path.join(OUTPUT_DIRECTORY, "images", "img_vision")
     os.makedirs(IMG_VISION_DIR, exist_ok=True)

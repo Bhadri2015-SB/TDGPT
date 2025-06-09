@@ -8,6 +8,7 @@ from app.extractors.pdf_extractor import process_pdf_file
 from app.extractors.excel_extractor import process_excel_file
 from app.extractors.ppt_extractor import process_ppt_file
 from app.extractors.markdown_extractor import process_md_file
+from app.core.groq_setup import groq_client, GROQ_MODEL
 
 
 async def gather_files():
@@ -31,7 +32,7 @@ async def gather_files():
 
 async def main():
     ensure_output_structure(OUTPUT_DIRECTORY)
-    groq_client = Groq(api_key=GROQ_API_KEY)
+    
 
     pdf_files, md_files, excel_files, ppt_files = await gather_files()
 
