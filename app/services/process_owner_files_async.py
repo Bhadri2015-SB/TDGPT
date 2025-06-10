@@ -3,13 +3,24 @@ from pathlib import Path
 from app.utils.file_handler import change_to_processed, get_file_category, remove_old_folder
 from app.services.extractors import PROCESSOR_MAP
 from app.utils.file_handler import UPLOAD_ROOT
+import inspect
+
 
 async def process_file(file_path: Path, category: str):
     try:
         processor = PROCESSOR_MAP.get(category)
         if processor:
-            loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(None, processor, str(file_path))
+            # if inspect.iscoroutinefunction(processor):
+                # If the processor is an async function
+            print("Processing file asynchronously")
+            result = await processor(str(file_path))
+            # else:
+            #     # If the processor is a sync function
+            #     print("Processing file synchronously")
+            #     loop = asyncio.get_event_loop()
+            #     result = await loop.run_in_executor(None, processor, str(file_path))
+            # loop = asyncio.get_event_loop()
+            # result = await loop.run_in_executor(None, processor, str(file_path))
             await change_to_processed(file_path.parent.parent.name, str(file_path), category)
             return {"file": file_path.name, "output": result}
         else:

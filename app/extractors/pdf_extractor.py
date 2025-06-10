@@ -50,7 +50,7 @@ async def extract_pdf_content(file_path, groq_client, model):
                 summaries.append(summary_path)
             else:
                 vision_path = os.path.join(img_vision_dir, f"{filename}_page{i}_img{idx}_vision.json")
-                description = await describe_image(img_path, groq_client, model)
+                description = await describe_image(img_path)
                 async with aiofiles.open(vision_path, "w", encoding="utf-8") as f:
                     await f.write(json.dumps({"description": description}, indent=2))
                 visions.append(vision_path)

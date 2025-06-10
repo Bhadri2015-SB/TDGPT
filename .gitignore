@@ -1,3 +1,5 @@
 /myenv
+env
 .env
 __pycache__
+output/images
