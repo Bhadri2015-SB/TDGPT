@@ -111,7 +111,7 @@ async def process_word_file(file_path: str) -> Dict[str, Any]:
                 "page_number": 1,
                 "text": text,
                 "tables": tables,
-                "image_paths": image_texts
+                "image_data": image_texts
             }
         ],
         "total_time_taken": f"{time.time() - start_time:.2f} seconds"
