@@ -27,7 +27,6 @@ FILE_TYPE_MAP = {
     "Word": [".doc", ".docx"],
     "PPT": [".ppt", ".pptx"],
     "MD": [".md"],
-    "Markdown": [".md"],
     "Excel": [".xls", ".xlsx", ".csv"],
     "Image": [".jpg", ".jpeg", ".png", ".gif"],
     "Video": [".mp4", ".avi", ".mov"],

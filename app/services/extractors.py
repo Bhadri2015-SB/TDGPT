@@ -7,19 +7,19 @@ from app.extractors.markdown_extractor import extract_markdown_content
 from app.extractors.ppt_extractor import extract_ppt_content
 from app.extractors.excel_extractor import extract_excel_content
 from app.services.image_caption import describe_image
-from app.services.image_caption import extract_text_from_image
+# from app.services.image_caption import extract_text_from_image
 # from app.core.groq_setup import groq_client, groq_model
 
 
 PROCESSOR_MAP = {
     "PDF": extract_pdf_content,
     "Word": process_word_file,
-    "Markdown": extract_markdown_content,
+    "MD": extract_markdown_content,
     "PPT": extract_ppt_content,
     "Excel": extract_excel_content,
     "Image": describe_image,
-    ".png": extract_text_from_image,
-    ".jpg": extract_text_from_image,
+    # ".png": extract_text_from_image,
+    # ".jpg": extract_text_from_image,
     "Video": None,
     "SQLITE": extract_sqlite_data,
     "SQL_SCRIPT": extract_sql_from_script,

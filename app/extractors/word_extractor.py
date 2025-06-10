@@ -14,6 +14,8 @@ import pytesseract
 
 from concurrent.futures import ThreadPoolExecutor
 
+from app.utils.file_handler import change_to_processed
+
 # Constants
 OUTPUT_IMG_DIR = Path("output/images")
 OUTPUT_IMG_DIR.mkdir(parents=True, exist_ok=True)
@@ -86,11 +88,13 @@ async def process_word_file(file_path: str) -> Dict[str, Any]:
     """
     start_time = time.time()
 
+    file_name = os.path.basename(file_path)
+
     loop = asyncio.get_running_loop()
     doc = await loop.run_in_executor(None, Document, file_path)
 
     metadata = {
-        "file_name": os.path.basename(file_path),
+        "file_name": file_name,
         "file_type": "word",
         "page_count": 1  # Still estimated due to python-docx limitations
     }
@@ -113,12 +117,16 @@ async def process_word_file(file_path: str) -> Dict[str, Any]:
         "total_time_taken": f"{time.time() - start_time:.2f} seconds"
     }
 
+    print("end of word extractor")
+
     # Write result to file
     try:
-        async with aiofiles.open("output/word_output.json", "w", encoding="utf-8") as f:
+        async with aiofiles.open(f"output/{file_name}.json", "w", encoding="utf-8") as f:
             await f.write(json.dumps(result, indent=2, ensure_ascii=False))
     except Exception as e:
         logger.error(f"Failed to write output JSON: {e}")
         raise
+    
+    await change_to_processed(str(file_path), "Word")
 
     return result

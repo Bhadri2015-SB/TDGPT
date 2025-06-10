@@ -12,8 +12,8 @@ async def process_file(file_path: Path, category: str):
         if processor:
             # if inspect.iscoroutinefunction(processor):
                 # If the processor is an async function
-            print("Processing file asynchronously")
-            result = processor(str(file_path))
+            print(f"Processing file asynchronously:{processor}")
+            result = await processor(str(file_path))
             # else:
             #     # If the processor is a sync function
             #     print("Processing file synchronously")
@@ -21,7 +21,7 @@ async def process_file(file_path: Path, category: str):
             #     result = await loop.run_in_executor(None, processor, str(file_path))
             # loop = asyncio.get_event_loop()
             # result = await loop.run_in_executor(None, processor, str(file_path))
-            await change_to_processed(file_path.parent.parent.name, str(file_path), category)
+            # await change_to_processed(file_path.parent.parent.name, str(file_path), category)
             return {"file": file_path.name, "output": result}
         else:
             return {"file": file_path.name, "error": f"No processor for category {category}"}

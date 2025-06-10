@@ -1,5 +1,10 @@
 import json
+from pathlib import Path
 from typing import Union
+
+import aiofiles
+
+from app.utils.file_handler import change_to_processed
 
 
 async def flatten_json(data: Union[dict, list], prefix: str = '') -> dict:
@@ -20,15 +25,22 @@ async def flatten_json(data: Union[dict, list], prefix: str = '') -> dict:
     return out
 
 
-async def flatten_json_file(file_path: str, output_path: str = "output/json_output.json") -> dict:
-    
+async def flatten_json_file(file_path: str) -> dict:
+    file_name = Path(file_path).name
+    output_path: str = f"output/{file_name}.json"
     with open(file_path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
-    flattened = await flatten_json(data)
+    result = await flatten_json(data)
 
-    
-    with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(flattened, f, indent=2)
+    print("end of json extractor")
 
-    return flattened
+    try:
+        async with aiofiles.open(output_path, "w", encoding="utf-8") as f:
+            await f.write(json.dumps(result, indent=2, ensure_ascii=False))
+    except Exception as e:
+        raise IOError(f"Failed to write JSON output file: {e}")
+
+    await change_to_processed(str(file_path), "JSON")
+
+    return result

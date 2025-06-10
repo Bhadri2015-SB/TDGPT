@@ -21,14 +21,14 @@ async def save_file(owner: str, file: UploadFile) -> str:
 
     return str(file_path)
 
-async def change_to_processed(owner: str, file_path: str, category: str) -> str:
-
+async def change_to_processed(file_path: str, category: str) -> str:
+    owner = Path(file_path).parent.parent.name
     processed_dir = PROCESSED_ROOT / owner / category
     processed_dir.mkdir(parents=True, exist_ok=True)
 
     file_name = Path(file_path).name
     new_file_path = processed_dir / file_name
-
+    print(f"Moving file: {new_file_path}")
     if not Path(file_path).exists():
         raise FileNotFoundError(f"File {file_path} does not exist.")
 

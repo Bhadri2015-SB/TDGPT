@@ -6,6 +6,7 @@ import fitz
 import aiofiles
 from PIL import Image
 import pytesseract
+from app.utils.file_handler import change_to_processed
 from app.utils.utils import summarize_text
 from app.services.image_caption import describe_image
 from app.core.groq_setup import groq_client, groq_model
@@ -58,7 +59,7 @@ async def extract_pdf_content(file_path):
                     await f.write(json.dumps({"description": description}, indent=2))
                 visions.append(vision_path)
 
-        summary = await summarize_text(text, client, model)
+        # summary = await summarize_text(text, client, model)
         pages.append({
             "page_number": i,
             "text": text or "No text found.",
@@ -66,11 +67,12 @@ async def extract_pdf_content(file_path):
             "images": images,
             "img_summary_files": summaries,
             "img_vision_files": visions,
-            "summary": summary,
+            # "summary": summary,
             "time_taken": f"{time.time() - start:.2f} sec"
         })
 
-    return {
+
+    result= {
         "metadata": {
             "file_name": os.path.basename(file_path),
             "file_type": "pdf",
@@ -81,3 +83,15 @@ async def extract_pdf_content(file_path):
         "overall_summary": "PDF extraction complete.",
         "total_time_taken": f"{time.time() - start:.2f} sec"
     }
+    pdf.close()
+    print("end of pdf extractor")
+
+    try:
+        async with aiofiles.open(f"output/{filename}.json", "w", encoding="utf-8") as f:
+            await f.write(json.dumps(result, indent=2, ensure_ascii=False))
+    except Exception as e:
+        raise IOError(f"Failed to write JSON output file: {e}")
+
+    await change_to_processed(str(file_path), "PDF")
+
+    return result

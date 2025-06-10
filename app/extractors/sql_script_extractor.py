@@ -1,8 +1,10 @@
 from pathlib import Path
 import json
+import aiofiles
 import aiosqlite
 from typing import Union
 from app.extractors.common_sqlite_extraction import extract_data_from_connection
+from app.utils.file_handler import change_to_processed
 
 
 async def extract_sql_from_script(
@@ -23,9 +25,9 @@ async def extract_sql_from_script(
     if not sql_path.exists():
         raise FileNotFoundError(f"SQL file not found: {file_path}")
 
-    output_path = Path(output_dir)
-    output_path.mkdir(parents=True, exist_ok=True)
-    output_file = output_path / f"{sql_path.stem}.json"
+    # output_path = Path(output_dir)
+    # output_path.mkdir(parents=True, exist_ok=True)
+    # output_file = output_path / f"{sql_path.stem}.json"
 
     # Read SQL script (sync is fine here unless you're processing very large files)
     try:
@@ -44,10 +46,20 @@ async def extract_sql_from_script(
         result = await extract_data_from_connection(connection)
 
     # Save to JSON
+    # try:
+    #     with open(output_file, "w", encoding="utf-8") as f:
+    #         json.dump(result, f, indent=2, ensure_ascii=False)
+    # except Exception as e:
+    #     raise IOError(f"Failed to write JSON output: {e}")
+    
+    print("end of sql script extractor")
+
     try:
-        with open(output_file, "w", encoding="utf-8") as f:
-            json.dump(result, f, indent=2, ensure_ascii=False)
+        async with aiofiles.open(f"output/{sql_path.name}.json", "w", encoding="utf-8") as f:
+            await f.write(json.dumps(result, indent=2, ensure_ascii=False))
     except Exception as e:
-        raise IOError(f"Failed to write JSON output: {e}")
+        raise IOError(f"Failed to write JSON output file: {e}")
+    
+    await change_to_processed(str(file_path), "SQL_SCRIPT")
 
     return result
