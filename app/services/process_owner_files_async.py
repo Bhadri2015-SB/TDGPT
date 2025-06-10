@@ -13,7 +13,7 @@ async def process_file(file_path: Path, category: str):
             # if inspect.iscoroutinefunction(processor):
                 # If the processor is an async function
             print("Processing file asynchronously")
-            result = await processor(str(file_path))
+            result = processor(str(file_path))
             # else:
             #     # If the processor is a sync function
             #     print("Processing file synchronously")

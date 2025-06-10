@@ -8,6 +8,7 @@ from PIL import Image
 import pytesseract
 from app.utils.utils import summarize_text
 from app.services.image_caption import describe_image
+from app.core.groq_setup import groq_client, groq_model
 
 def ensure_dirs(base_name):
     img_root = os.path.join("output", "images")
@@ -17,11 +18,13 @@ def ensure_dirs(base_name):
     os.makedirs(img_vision, exist_ok=True)
     return img_root, img_summary, img_vision
 
-async def extract_pdf_content(file_path, groq_client, model):
+async def extract_pdf_content(file_path):
+    client = groq_client
+    model = groq_model
     start = time.time()
     pdf = fitz.open(file_path)
     filename = os.path.splitext(os.path.basename(file_path))[0]
-    img_root, img_summary_dir, img_vision_dir = ensure_dirs(filename)
+    img_root, img_summary_dir, img_vision_dir = ensure_dirs(filename)  #why "filename" is passed?
 
     pages = []
     for i, page in enumerate(pdf, start=1):
@@ -55,7 +58,7 @@ async def extract_pdf_content(file_path, groq_client, model):
                     await f.write(json.dumps({"description": description}, indent=2))
                 visions.append(vision_path)
 
-        summary = await summarize_text(text, groq_client, model)
+        summary = await summarize_text(text, client, model)
         pages.append({
             "page_number": i,
             "text": text or "No text found.",

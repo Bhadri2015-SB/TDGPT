@@ -1,73 +1,104 @@
 import json
 import os
-import time
-import pytesseract
 import uuid
+import time
+import asyncio
+import logging
+from pathlib import Path
+from typing import List, Dict, Any
+
+import aiofiles
 from PIL import Image
 from docx import Document
-from docx.table import _Cell
-from docx.text.paragraph import Paragraph
+import pytesseract
 
-# Output image folder (ensure it exists)
-OUTPUT_IMG_DIR = "output/images"
-os.makedirs(OUTPUT_IMG_DIR, exist_ok=True)
+from concurrent.futures import ThreadPoolExecutor
 
-def extract_text_from_paragraphs(paragraphs):
+# Constants
+OUTPUT_IMG_DIR = Path("output/images")
+OUTPUT_IMG_DIR.mkdir(parents=True, exist_ok=True)
+
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
+
+
+def extract_text_from_paragraphs(paragraphs) -> str:
     return "\n".join(p.text.strip() for p in paragraphs if p.text.strip())
 
-def extract_tables_as_text(tables):
+
+def extract_tables_as_text(tables) -> List[str]:
     table_texts = []
     for table in tables:
         rows = []
         for row in table.rows:
-            cells = [cell.text.strip().replace('\n', ' ') for cell in row.cells]
+            cells = [cell.text.strip().replace("\n", " ") for cell in row.cells]
             rows.append(" | ".join(cells))
         table_texts.append("\n".join(rows))
     return table_texts
 
-def extract_images(doc):
+
+def extract_images_sync(doc: Document, output_dir: Path) -> List[str]:
     """
-    Extracts images and runs OCR using pytesseract.
+    Extracts images from the DOCX and runs OCR using pytesseract.
+    This function is blocking and should be run in an executor.
     """
     image_texts = []
     rels = doc.part._rels
-    i=1#temporary counter for unique image names
-    for rel in rels:
-        rel = rels[rel]
-        if "image" in rel.target_ref:
-            img_ext = rel.target_ref.split('.')[-1]
-            image_data = rel.target_part.blob
-            unique_name = f"{i}.{img_ext}"#uuid.uuid4()
-            i+=1
-            image_path = os.path.join(OUTPUT_IMG_DIR, unique_name)
-            
-            with open(image_path, "wb") as f:
-                f.write(image_data)
 
-            # OCR using pytesseract
+    for rel in rels.values():
+        if "image" in rel.target_ref:
             try:
+                img_ext = rel.target_ref.split('.')[-1]
+                image_data = rel.target_part.blob
+                unique_name = f"{uuid.uuid4()}.{img_ext}"
+                image_path = output_dir / unique_name
+
+                with open(image_path, "wb") as f:
+                    f.write(image_data)
+
                 image = Image.open(image_path)
                 text = pytesseract.image_to_string(image)
                 if text.strip():
                     image_texts.append(text.strip())
+
             except Exception as e:
-                print(f"Error reading OCR from {image_path}: {e}")
-    
+                logger.warning(f"Failed to process image {rel.target_ref}: {e}")
+
     return image_texts
 
-def process_word_file(file_path):
+
+async def extract_images(doc: Document, output_dir: Path) -> List[str]:
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, extract_images_sync, doc, output_dir)
+
+
+async def process_word_file(file_path: str) -> Dict[str, Any]:
+    """
+    Asynchronously processes a Word (.docx) file:
+    - Extracts paragraphs, tables, and OCR text from images.
+    - Writes output JSON.
+
+    Args:
+        file_path (str): Path to the DOCX file.
+
+    Returns:
+        dict: Extracted content and metadata.
+    """
     start_time = time.time()
-    doc = Document(file_path)
-    
+
+    loop = asyncio.get_running_loop()
+    doc = await loop.run_in_executor(None, Document, file_path)
+
     metadata = {
         "file_name": os.path.basename(file_path),
         "file_type": "word",
-        "page_count": 1  # python-docx doesn't support real page detection
+        "page_count": 1  # Still estimated due to python-docx limitations
     }
 
+    # Extract textual content
     text = extract_text_from_paragraphs(doc.paragraphs)
     tables = extract_tables_as_text(doc.tables)
-    image_texts = extract_images(doc)
+    image_texts = await extract_images(doc, OUTPUT_IMG_DIR)
 
     result = {
         "metadata": metadata,
@@ -82,8 +113,12 @@ def process_word_file(file_path):
         "total_time_taken": f"{time.time() - start_time:.2f} seconds"
     }
 
-    #testing purposes
-    with open("output/word_output.json", "w") as f:
-        json.dump(result, f, indent=2)
+    # Write result to file
+    try:
+        async with aiofiles.open("output/word_output.json", "w", encoding="utf-8") as f:
+            await f.write(json.dumps(result, indent=2, ensure_ascii=False))
+    except Exception as e:
+        logger.error(f"Failed to write output JSON: {e}")
+        raise
 
     return result
