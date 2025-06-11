@@ -16,19 +16,25 @@ router = APIRouter()
 @router.post("/upload/")
 async def upload_files(files: List[UploadFile] = File(...), user:User=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     saved_paths = []
-    file_sizes = 0
-    file_names = []
+    # file_sizes = 0
+    # file_names = []
     for file in files:
         path = await save_file(user.username, file)
-        file_sizes += await get_file_size(file)
-        file_names.append(file.filename)
+        file_sizes = await get_file_size(file)
+        status=await create_upload_batch(
+            user_id=user.id,
+            file_name=file.filename,
+            file_size=file_sizes,
+            db=db)
+        # file_sizes = await get_file_size(file)
+        # file_names.append(file.filename)
         saved_paths.append(path)
 
-    status=await create_upload_batch(
-        user_id=user.id,
-        file_names=file_names,
-        total_size=file_sizes,
-        db=db)
+    # status=await create_upload_batch(
+    #     user_id=user.id,
+    #     file_name=file_names,
+    #     total_size=file_sizes,
+    #     db=db)
 
     return {
         "db_status": status,

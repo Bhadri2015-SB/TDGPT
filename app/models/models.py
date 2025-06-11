@@ -32,13 +32,14 @@ class UploadBatch(Base):
     id = Column(String(36), primary_key=True, default=generate_uuid)
     user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
 
-    file_names = Column(JSON, nullable=False)  # list of file names
-    total_files = Column(Integer, nullable=False)
-    total_size = Column(Integer, nullable=False)  # in bytes
+    file_name = Column(String(255), nullable=False)  # list of file names #change
+    file_size = Column(Integer, nullable=False)  # in bytes
     status = Column(String(50), default="unprocessed", nullable=False)
     is_deleted = Column(Boolean, default=False)
 
     upload_time = Column(DateTime(timezone=True), default=datetime.utcnow)
+    processed_time = Column(DateTime(timezone=True), default=None)
+    time_taken_to_process=Column(Integer, default=None)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
 
