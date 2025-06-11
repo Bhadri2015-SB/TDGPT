@@ -1,18 +1,20 @@
 from fastapi import APIRouter, Depends, HTTPException, Form
 from app.core.security import get_current_user
+from app.db.session import get_db
 from app.models.models import User
 from app.services.database_service import mark_batch_as_processed
 from app.services.process_owner_files_async import process_owner_files_async
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 router = APIRouter()
 
 @router.post("/process-owner-files/")
-async def trigger_file_processing(user:User = Depends(get_current_user)):
+async def trigger_file_processing(user:User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     
     try:
         results = await process_owner_files_async(user.username)
-        await mark_batch_as_processed(user.id)
+        await mark_batch_as_processed(db, user.id)
         return {"owner": user.username, "processed_files": results}
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))

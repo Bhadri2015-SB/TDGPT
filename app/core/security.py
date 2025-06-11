@@ -17,7 +17,7 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/login")
 
 SECRET_KEY = settings.SECRET_KEY #"your_secret_key"  # use strong random key
 ALGORITHM = settings.ALGORITHM 
-ACCESS_TOKEN_EXPIRE_MINUTES = settings.ACCESS_TOKEN_EXPIRE_MINUTES
+ACCESS_TOKEN_EXPIRE_MINUTES = int(settings.ACCESS_TOKEN_EXPIRE_MINUTES)
 
 async def create_access_token(data: dict, expires_delta: timedelta = None):
     to_encode = data.copy()

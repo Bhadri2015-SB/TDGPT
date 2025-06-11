@@ -55,7 +55,7 @@ async def create_upload_batch(
 
 async def mark_batch_as_processed(
     db: AsyncSession,
-    batch_id: str,
+    user_id: str,
 ) -> Optional[UploadBatch]:
     """
     Mark an existing batch as processed.
@@ -70,7 +70,7 @@ async def mark_batch_as_processed(
     try:
         result = await db.execute(
             select(UploadBatch).where(
-                UploadBatch.user_id == batch_id,
+                UploadBatch.user_id == user_id,
                 UploadBatch.is_deleted == False
             )
         )
