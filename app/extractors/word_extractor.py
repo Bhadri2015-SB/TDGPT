@@ -65,6 +65,7 @@ def extract_images_sync(doc: Document, output_dir: Path) -> List[str]:
 
             except Exception as e:
                 logger.warning(f"Failed to process image {rel.target_ref}: {e}")
+                return f"Failed to process image in word {rel.target_ref}: {e}"
 
     return image_texts
 

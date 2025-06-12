@@ -8,70 +8,55 @@ from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.db.session import get_db
-from app.models.models import UploadBatch, User
+from app.models.models import UploadRecord, User
 from app.core.security import hash_password, verify_password
 
 
 # -------------------- Upload Batch Functions --------------------
 
-async def create_upload_batch(
+async def create_upload_record(
     user_id: str,
-    file_names: List[str],
-    total_size: int,
+    file_name: str,
+    file_size: int,
     db: AsyncSession
-) -> Optional[UploadBatch]:
-    """
-    Create a new upload batch record.
-
-    Args:
-        db (AsyncSession): Database session.
-        user_id (str): User's UUID.
-        file_names (List[str]): List of file names uploaded.
-        total_size (int): Total size of files in bytes.
-
-    Returns:
-        Optional[UploadBatch]: Created batch or None if failed.
-    """
+) -> Optional[UploadRecord]:
     try:
-        batch = UploadBatch(
+        record = UploadRecord(
             user_id=user_id,
-            file_names=file_names,
-            total_files=len(file_names),
-            total_size=total_size,
+            file_name=file_name,
+            file_size=file_size,
             status="unprocessed",
+            message="process not initiated",
             upload_time=datetime.utcnow(),
             created_at=datetime.utcnow(),
             updated_at=datetime.utcnow()
         )
-        db.add(batch)
+        db.add(record)
         await db.commit()
-        await db.refresh(batch)
-        return batch
-
-    except SQLAlchemyError:
+        await db.refresh(record)
+        return "record saved successfully"
+    except SQLAlchemyError as e:
         await db.rollback()
-        return None
+        print(f"Error saving upload record: {e}")
+        return f"Error saving upload record: {e}"
 
 
-async def mark_batch_as_processed(
+
+async def mark_file_as_processed(
     db: AsyncSession,
     user_id: str,
-) -> Optional[UploadBatch]:
-    """
-    Mark an existing batch as processed.
+    file_name: str,
+    status: str,
+    message: str,
+    time_taken_to_process: int = None,
+) -> Optional[UploadRecord]:
 
-    Args:
-        db (AsyncSession): Database session.
-        batch_id (str): Batch UUID.
-
-    Returns:
-        Optional[UploadBatch]: Updated batch or None.
-    """
     try:
         result = await db.execute(
-            select(UploadBatch).where(
-                UploadBatch.user_id == user_id,
-                UploadBatch.is_deleted == False
+            select(UploadRecord).where(
+                UploadRecord.user_id == user_id,
+                UploadRecord.file_name == file_name,
+                UploadRecord.is_deleted == False
             )
         )
         batch = result.scalars().first()
@@ -79,7 +64,11 @@ async def mark_batch_as_processed(
         if not batch:
             return None
 
-        batch.status = "processed"
+        batch.status = status
+        batch.message = message
+        if time_taken_to_process is not None:
+            batch.processed_time = datetime.utcnow()
+        batch.time_taken_to_process = time_taken_to_process
         batch.updated_at = datetime.utcnow()
 
         await db.commit()

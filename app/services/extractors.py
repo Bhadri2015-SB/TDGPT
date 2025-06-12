@@ -18,8 +18,6 @@ PROCESSOR_MAP = {
     "PPT": extract_ppt_content,
     "Excel": extract_excel_content,
     "Image": describe_image,
-    # ".png": extract_text_from_image,
-    # ".jpg": extract_text_from_image,
     "Video": None,
     "SQLITE": extract_sqlite_data,
     "SQL_SCRIPT": extract_sql_from_script,
