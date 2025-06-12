@@ -3,6 +3,7 @@ import json
 import aiofiles
 import aiosqlite
 from typing import Union, List, Dict, Any
+
 from app.extractors.common_sqlite_extraction import extract_data_from_connection
 from app.utils.file_handler import change_to_processed
 
@@ -25,31 +26,23 @@ async def extract_sqlite_data(
     if not db_path.exists():
         raise FileNotFoundError(f"SQLite file not found: {db_path}")
 
-    # output_path = Path(output_dir)
-    # output_path.mkdir(parents=True, exist_ok=True)
-    # output_file = output_path / f"{db_path.stem}.json"
-
     try:
         async with aiosqlite.connect(db_path) as connection:
             result = await extract_data_from_connection(connection)
     except Exception as e:
         raise RuntimeError(f"Failed to extract data from SQLite database: {e}")
 
-    # try:
-    #     with open(output_file, "w", encoding="utf-8") as f:
-    #         json.dump(result, f, indent=2, ensure_ascii=False)
-    # except Exception as e:
-    #     raise IOError(f"Failed to write JSON output file: {e}")
-
     print("end of sqlite extractor")
 
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+    output_file = output_path / f"{db_path.name}.json"
+
     try:
-        async with aiofiles.open(f"output/{db_path.name}.json", "w", encoding="utf-8") as f:
+        async with aiofiles.open(output_file, "w", encoding="utf-8") as f:
             await f.write(json.dumps(result, indent=2, ensure_ascii=False))
     except Exception as e:
         raise IOError(f"Failed to write JSON output file: {e}")
-        # logger.error(f"Failed to write output JSON: {e}")
-        # raise
 
     await change_to_processed(str(file_path), "SQLITE")
 

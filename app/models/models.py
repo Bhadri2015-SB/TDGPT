@@ -33,6 +33,7 @@ class UploadRecord(Base):
     user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
 
     file_name = Column(String(255), nullable=False)
+    file_type = Column(String(50), nullable=False)  
     file_size = Column(Integer, nullable=False)  # in bytes
     status = Column(String(50), default="unprocessed", nullable=False)
     message = Column(Text, nullable=True)  # For storing any error messages or additional info

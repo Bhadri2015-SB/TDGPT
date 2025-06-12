@@ -1,14 +1,36 @@
 from fastapi import UploadFile
 from pathlib import Path
 from app.core.config import FILE_TYPE_MAP, UPLOAD_ROOT, PROCESSED_ROOT
+import shutil
+
 
 async def get_file_category(extension: str) -> str:
+    """
+    Determines the file category based on its extension.
+
+    Args:
+        extension (str): File extension (e.g., '.pdf').
+
+    Returns:
+        str: Category name (e.g., 'pdf', 'image').
+    """
     for category, extensions in FILE_TYPE_MAP.items():
         if extension in extensions:
             return category
     return "Others"
 
+
 async def save_file(owner: str, file: UploadFile) -> str:
+    """
+    Saves an uploaded file under the structured path: UPLOAD_ROOT/owner/category/filename
+
+    Args:
+        owner (str): Username or identifier of the file owner.
+        file (UploadFile): Uploaded file object.
+
+    Returns:
+        str: Full path where the file was saved.
+    """
     extension = Path(file.filename).suffix.lower()
     category = await get_file_category(extension)
 
@@ -16,42 +38,70 @@ async def save_file(owner: str, file: UploadFile) -> str:
     owner_dir.mkdir(parents=True, exist_ok=True)
 
     file_path = owner_dir / file.filename
+
     with open(file_path, "wb") as buffer:
-        buffer.write(file.file.read())
+        buffer.write(await file.read())
 
     return str(file_path)
 
+
 async def change_to_processed(file_path: str, category: str) -> str:
-    owner = Path(file_path).parent.parent.name
+    """
+    Moves a processed file to the processed directory.
+
+    Args:
+        file_path (str): Original path of the file.
+        category (str): Category folder name.
+
+    Returns:
+        str: New file path in the processed directory.
+    """
+    original_path = Path(file_path)
+    if not original_path.exists():
+        raise FileNotFoundError(f"File {file_path} does not exist.")
+
+    owner = original_path.parent.parent.name
     processed_dir = PROCESSED_ROOT / owner / category
     processed_dir.mkdir(parents=True, exist_ok=True)
 
-    file_name = Path(file_path).name
-    new_file_path = processed_dir / file_name
-    print(f"Moving file: {new_file_path}")
-    if not Path(file_path).exists():
-        raise FileNotFoundError(f"File {file_path} does not exist.")
+    new_file_path = processed_dir / original_path.name
+    shutil.move(str(original_path), str(new_file_path))
 
-    Path(file_path).rename(new_file_path)
     return str(new_file_path)
 
-async def remove_old_folder(owner_dir):
+
+async def remove_old_folder(owner_dir: Path) -> None:
+    """
+    Removes empty category folders and the owner folder if completely empty.
+
+    Args:
+        owner_dir (Path): Directory of the owner (e.g., UPLOAD_ROOT/owner).
+    """
     for category_folder in owner_dir.iterdir():
         if category_folder.is_dir() and not any(category_folder.iterdir()):
             try:
                 category_folder.rmdir()
-            except Exception as e:
-                print(f"Failed to remove folder {category_folder}: {e}")
+            except Exception:
+                pass  # Silently ignore cleanup issues
 
-    # 🧹 Remove the owner directory if it's now empty
     if not any(owner_dir.iterdir()):
         try:
             owner_dir.rmdir()
-        except Exception as e:
-            print(f"Failed to remove owner directory {owner_dir}: {e}")
+        except Exception:
+            pass  # Silently ignore cleanup issues
+
 
 async def get_file_size(file: UploadFile) -> int:
-    file.file.seek(0, 2)  # Move to end of file
+    """
+    Gets the size of an UploadFile in bytes.
+
+    Args:
+        file (UploadFile): File to measure.
+
+    Returns:
+        int: Size in bytes.
+    """
+    file.file.seek(0, 2)  # Seek to end
     size = file.file.tell()
-    file.file.seek(0)     # Reset to beginning
+    file.file.seek(0)     # Reset to start
     return size

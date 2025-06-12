@@ -1,13 +1,13 @@
 from fastapi import FastAPI
 
-from app.api.v1.endpoints import upload, process_initiate, dev, user_route
+from app.api.v1.endpoints import file_process, process_initiate, dev, user_route
 from app.db.session import Base, engine 
  
 
 app = FastAPI()
 
 # Register routers
-app.include_router(upload.router, prefix="/api")
+app.include_router(file_process.router, prefix="/api")
 app.include_router(process_initiate.router, prefix="/api")
 app.include_router(dev.router, prefix="/api")
 app.include_router(user_route.router)

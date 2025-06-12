@@ -2,7 +2,8 @@ from pathlib import Path
 import json
 import aiofiles
 import aiosqlite
-from typing import Union
+from typing import Union, List, Dict
+
 from app.extractors.common_sqlite_extraction import extract_data_from_connection
 from app.utils.file_handler import change_to_processed
 
@@ -10,56 +11,47 @@ from app.utils.file_handler import change_to_processed
 async def extract_sql_from_script(
     file_path: Union[str, Path],
     output_dir: Union[str, Path] = "output/sql_script"
-) -> list:
+) -> List[Dict]:
     """
-    Asynchronously extracts data from an SQL script and saves it as a JSON file.
+    Executes an SQL script file in-memory using SQLite and extracts the resulting data.
 
     Args:
-        file_path (str | Path): Path to the .sql script file.
-        output_dir (str | Path): Directory to store the output .json file.
+        file_path (str | Path): Path to the .sql file.
+        output_dir (str | Path): Directory to store the resulting JSON file.
 
     Returns:
-        list: Extracted database data from the executed script.
+        List[Dict]: Extracted table data from the executed script.
     """
     sql_path = Path(file_path)
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+    output_file = output_path / f"{sql_path.name}.json"
+
     if not sql_path.exists():
-        raise FileNotFoundError(f"SQL file not found: {file_path}")
+        raise FileNotFoundError(f"SQL script not found at: {sql_path}")
 
-    # output_path = Path(output_dir)
-    # output_path.mkdir(parents=True, exist_ok=True)
-    # output_file = output_path / f"{sql_path.stem}.json"
-
-    # Read SQL script (sync is fine here unless you're processing very large files)
     try:
-        with open(sql_path, "r", encoding="utf-8") as f:
+        with sql_path.open("r", encoding="utf-8") as f:
             sql_script = f.read()
     except Exception as e:
-        raise IOError(f"Failed to read SQL script file: {e}")
+        raise IOError(f"Error reading SQL script file '{sql_path}': {e}")
 
-    # Create in-memory SQLite DB
-    async with aiosqlite.connect(":memory:") as connection:
-        try:
+    # Execute in in-memory SQLite DB
+    try:
+        async with aiosqlite.connect(":memory:") as connection:
             await connection.executescript(sql_script)
-        except Exception as e:
-            raise ValueError(f"SQL script execution failed: {e}")
+            result = await extract_data_from_connection(connection)
+    except Exception as e:
+        raise RuntimeError(f"SQL script execution or extraction failed: {e}")
 
-        result = await extract_data_from_connection(connection)
-
-    # Save to JSON
-    # try:
-    #     with open(output_file, "w", encoding="utf-8") as f:
-    #         json.dump(result, f, indent=2, ensure_ascii=False)
-    # except Exception as e:
-    #     raise IOError(f"Failed to write JSON output: {e}")
-    
     print("end of sql script extractor")
 
+    # Save result to output file
     try:
-        async with aiofiles.open(f"output/{sql_path.name}.json", "w", encoding="utf-8") as f:
+        async with aiofiles.open(output_file, "w", encoding="utf-8") as f:
             await f.write(json.dumps(result, indent=2, ensure_ascii=False))
     except Exception as e:
-        raise IOError(f"Failed to write JSON output file: {e}")
-    
-    await change_to_processed(str(file_path), "SQL_SCRIPT")
+        raise IOError(f"Failed to write output JSON file to '{output_file}': {e}")
 
+    await change_to_processed(str(sql_path), "SQL_SCRIPT")
     return result

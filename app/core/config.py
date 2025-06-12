@@ -20,7 +20,7 @@ os.makedirs(IMAGE_OUTPUT_DIR / "img_summary", exist_ok=True)
 os.makedirs(IMAGE_OUTPUT_DIR / "img_vision", exist_ok=True)
 
 
-SUBFOLDERS = ["PDF", "Xlsx", "pptx", "Markdown"]
+# SUBFOLDERS = ["PDF", "Xlsx", "pptx", "Markdown"]
 
 FILE_TYPE_MAP = {
     "PDF": [".pdf"],

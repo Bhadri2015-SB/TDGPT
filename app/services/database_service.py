@@ -1,8 +1,7 @@
-from typing import List, Optional, Union
+from pathlib import Path
+from typing import List, Optional, Union, Dict
 from datetime import datetime
-import uuid
 
-from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
@@ -11,35 +10,50 @@ from app.db.session import get_db
 from app.models.models import UploadRecord, User
 from app.core.security import hash_password, verify_password
 
-
-# -------------------- Upload Batch Functions --------------------
+# -------------------- Upload Record Operations --------------------
 
 async def create_upload_record(
     user_id: str,
     file_name: str,
     file_size: int,
+    path: str,
     db: AsyncSession
-) -> Optional[UploadRecord]:
+) -> Union[str, None]:
+    """
+    Create a new upload record in the database.
+
+    Args:
+        user_id (str): User ID.
+        file_name (str): Name of the uploaded file.
+        file_size (int): Size of the file in bytes.
+        path (str): File storage path.
+        db (AsyncSession): Async DB session.
+
+    Returns:
+        Union[str, None]: Success message or None on error.
+    """
+    file_type = Path(path).parent.name
+    now = datetime.utcnow()
+
+    record = UploadRecord(
+        user_id=user_id,
+        file_name=file_name,
+        file_type=file_type,
+        file_size=file_size,
+        status="unprocessed",
+        message="process not initiated",
+        upload_time=now,
+        created_at=now,
+        updated_at=now
+    )
+
     try:
-        record = UploadRecord(
-            user_id=user_id,
-            file_name=file_name,
-            file_size=file_size,
-            status="unprocessed",
-            message="process not initiated",
-            upload_time=datetime.utcnow(),
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow()
-        )
         db.add(record)
         await db.commit()
-        await db.refresh(record)
         return "record saved successfully"
-    except SQLAlchemyError as e:
+    except SQLAlchemyError:
         await db.rollback()
-        print(f"Error saving upload record: {e}")
-        return f"Error saving upload record: {e}"
-
+        return None
 
 
 async def mark_file_as_processed(
@@ -48,9 +62,22 @@ async def mark_file_as_processed(
     file_name: str,
     status: str,
     message: str,
-    time_taken_to_process: int = None,
+    time_taken_to_process: Optional[int] = None,
 ) -> Optional[UploadRecord]:
+    """
+    Update status of a processed file.
 
+    Args:
+        db (AsyncSession): Database session.
+        user_id (str): ID of the user.
+        file_name (str): Name of the processed file.
+        status (str): New processing status.
+        message (str): Processing result message.
+        time_taken_to_process (Optional[int]): Time taken in seconds.
+
+    Returns:
+        Optional[UploadRecord]: Updated record or None if not found.
+    """
     try:
         result = await db.execute(
             select(UploadRecord).where(
@@ -59,27 +86,74 @@ async def mark_file_as_processed(
                 UploadRecord.is_deleted == False
             )
         )
-        batch = result.scalars().first()
+        record = result.scalars().first()
 
-        if not batch:
+        if not record:
             return None
 
-        batch.status = status
-        batch.message = message
+        record.status = status
+        record.message = message
+        record.updated_at = datetime.utcnow()
         if time_taken_to_process is not None:
-            batch.processed_time = datetime.utcnow()
-        batch.time_taken_to_process = time_taken_to_process
-        batch.updated_at = datetime.utcnow()
+            record.processed_time = datetime.utcnow()
+            record.time_taken_to_process = time_taken_to_process
 
         await db.commit()
-        await db.refresh(batch)
-        return batch
-
+        await db.refresh(record)
+        return record
     except SQLAlchemyError:
         await db.rollback()
         return None
 
-# -------------------- User Functions --------------------
+
+async def get_file_list(
+    user_id: str,
+    db: AsyncSession
+) -> List[UploadRecord]:
+    """
+    Get all non-deleted upload records for a user.
+
+    Args:
+        user_id (str): User ID.
+        db (AsyncSession): DB session.
+
+    Returns:
+        List[UploadRecord]: Upload records list.
+    """
+    try:
+        result = await db.execute(
+            select(UploadRecord).where(
+                UploadRecord.user_id == user_id,
+                UploadRecord.is_deleted == False
+            )
+        )
+        return result.scalars().all()
+    except SQLAlchemyError:
+        return []
+
+
+async def update_db_statuses(
+    db: AsyncSession,
+    results: List[Dict]
+) -> None:
+    """
+    Batch update upload record statuses after processing.
+
+    Args:
+        db (AsyncSession): DB session.
+        results (List[Dict]): Each dict must contain user_id, file_name, status, message, and optional time_taken_to_process.
+    """
+    for result in results:
+        await mark_file_as_processed(
+            db=db,
+            user_id=result["user_id"],
+            file_name=result["file_name"],
+            status=result["status"],
+            message=result["message"],
+            time_taken_to_process=result.get("time_taken_to_process")
+        )
+
+# -------------------- User Management --------------------
 
 async def create_user(
     db: AsyncSession,
@@ -88,16 +162,16 @@ async def create_user(
     password: str
 ) -> Union[User, str, None]:
     """
-    Create a new user.
+    Create a new user account.
 
     Args:
         db (AsyncSession): DB session.
-        username (str): Desired username.
-        email (str): Unique email.
-        password (str): Plain password.
+        username (str): Username.
+        email (str): Email (unique).
+        password (str): Plaintext password.
 
     Returns:
-        Union[User, str, None]: User object, error message, or None.
+        Union[User, str, None]: Created user, error message if exists, or None on DB error.
     """
     try:
         result = await db.execute(
@@ -109,22 +183,22 @@ async def create_user(
             return "user already exists"
 
         hashed_pw = await hash_password(password)
+        now = datetime.utcnow()
 
-        new_user = User(
+        user = User(
             username=username,
             email=email,
             password_hash=hashed_pw,
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
+            created_at=now,
+            updated_at=now
         )
 
-        db.add(new_user)
+        db.add(user)
         await db.commit()
-        await db.refresh(new_user)
-        return new_user
+        await db.refresh(user)
+        return user
 
-    except SQLAlchemyError as e:
-        print(f"Error creating user: {e}")
+    except SQLAlchemyError:
         await db.rollback()
         return None
 
@@ -135,7 +209,7 @@ async def authenticate_user(
     password: str
 ) -> Optional[User]:
     """
-    Validate user credentials.
+    Authenticate user using email and password.
 
     Args:
         db (AsyncSession): DB session.

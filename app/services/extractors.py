@@ -7,8 +7,7 @@ from app.extractors.markdown_extractor import extract_markdown_content
 from app.extractors.ppt_extractor import extract_ppt_content
 from app.extractors.excel_extractor import extract_excel_content
 from app.services.image_caption import describe_image
-# from app.services.image_caption import extract_text_from_image
-# from app.core.groq_setup import groq_client, groq_model
+
 
 
 PROCESSOR_MAP = {
