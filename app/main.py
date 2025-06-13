@@ -9,7 +9,7 @@ app = FastAPI()
 # Register routers
 app.include_router(file_process.router, prefix="/api")
 app.include_router(process_initiate.router, prefix="/api")
-app.include_router(dev.router, prefix="/api")
+# app.include_router(dev.router, prefix="/api")
 app.include_router(user_route.router)
 
 

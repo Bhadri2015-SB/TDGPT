@@ -54,6 +54,35 @@ async def create_upload_record(
     except SQLAlchemyError:
         await db.rollback()
         return None
+    
+async def make_processing(
+    db: AsyncSession,
+    user_id: str
+    ):
+
+    try:
+        result = await db.execute(
+            select(UploadRecord).where(
+                UploadRecord.user_id == user_id,
+                UploadRecord.status == "unprocessed",
+                UploadRecord.is_deleted == False
+            )
+        )
+        records = result.scalars().all()
+
+        if not records:
+            return "no unprocessed files found"
+
+        for record in records:
+            record.status = "processing"
+            record.message = "process initiated"
+            record.updated_at = datetime.utcnow()
+
+        await db.commit()
+        return "processing started for unprocessed files"
+    except SQLAlchemyError as e:
+        await db.rollback()
+        return e
 
 
 async def mark_file_as_processed(
@@ -101,9 +130,9 @@ async def mark_file_as_processed(
         await db.commit()
         await db.refresh(record)
         return record
-    except SQLAlchemyError:
+    except SQLAlchemyError as e:
         await db.rollback()
-        return None
+        return e
 
 
 async def get_file_list(

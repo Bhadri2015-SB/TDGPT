@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.services.extractors import PROCESSOR_MAP
 from app.utils.file_handler import get_file_category, remove_old_folder
 from app.utils.file_handler import UPLOAD_ROOT
-from app.services.database_service import update_db_statuses
+from app.services.database_service import make_processing, update_db_statuses
 
 async def process_file(file_path: Path, category: str, user_id: str) -> dict:
     """
@@ -70,6 +70,8 @@ async def process_owner_files_async(owner: str, user_id: str, db: AsyncSession):
     owner_dir = UPLOAD_ROOT / owner
     if not owner_dir.exists():
         raise FileNotFoundError("Owner directory not found")
+
+    await make_processing(db, user_id)
 
     tasks = []
     for category_folder in owner_dir.iterdir():

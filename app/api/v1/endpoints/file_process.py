@@ -52,13 +52,13 @@ async def list_files(user: User = Depends(get_current_user), db: AsyncSession = 
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/extract-from-github/")
-async def extract_files_from_github(data: RepoInput, user:User=Depends(get_current_user)):
-    try:
-        result = await get_repo_files(data.repo_url)
-        return {
-            "message": "Files extracted and saved successfully.",
-            "details": result
-        }
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+# @router.post("/extract-from-github/")
+# async def extract_files_from_github(data: RepoInput, user:User=Depends(get_current_user)):
+#     try:
+#         result = await get_repo_files(data.repo_url)
+#         return {
+#             "message": "Files extracted and saved successfully.",
+#             "details": result
+#         }
+#     except Exception as e:
+#         raise HTTPException(status_code=400, detail=str(e))
