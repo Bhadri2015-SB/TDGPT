@@ -5,6 +5,7 @@ from typing import Any, Dict
 import aiofiles
 from markdown_it import MarkdownIt
 
+from app.core.logger import app_logger
 from app.utils.file_handler import change_to_processed
 
 
@@ -19,11 +20,14 @@ async def extract_markdown_content(file_path: str, *_) -> Dict[str, Any]:
         dict: Parsed markdown data and metadata.
     """
     file = Path(file_path)
+    app_logger.info(f"Starting extraction for Markdown file: {file.name}")
 
     try:
         async with aiofiles.open(file, "r", encoding="utf-8") as f:
             text = await f.read()
+        app_logger.debug(f"Read Markdown file successfully: {file.name}")
     except Exception as e:
+        app_logger.exception(f"Failed to read Markdown file {file.name}: {e}")
         return {
             "file_name": file.name,
             "file_type": "markdown",
@@ -74,14 +78,16 @@ async def extract_markdown_content(file_path: str, *_) -> Dict[str, Any]:
         },
         "content": content,
         "summary": "Markdown parsed successfully",
-        "total_time_taken": "0"  # Placeholder
+        "total_time_taken": "0" 
     }
 
     output_path = Path("output") / f"{file.name}.json"
     try:
         async with aiofiles.open(output_path, "w", encoding="utf-8") as f:
             await f.write(json.dumps(result, indent=2, ensure_ascii=False))
+        app_logger.info(f"Written flattened Markdown JSON to: {output_path}")
     except Exception as e:
+        app_logger.exception(f"Failed to write JSON output for Markdown file {file.name}: {e}")
         return {
             "file_name": file.name,
             "file_type": "markdown",
@@ -90,4 +96,6 @@ async def extract_markdown_content(file_path: str, *_) -> Dict[str, Any]:
         }
 
     await change_to_processed(str(file), "MD")
+    app_logger.info(f"Moved Markdown file to processed folder: {file.name}")
+
     return result

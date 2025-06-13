@@ -9,6 +9,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.db.session import get_db
 from app.models.models import UploadRecord, User
 from app.core.security import hash_password, verify_password
+from app.core.logger import app_logger  
 
 # -------------------- Upload Record Operations --------------------
 
@@ -19,19 +20,6 @@ async def create_upload_record(
     path: str,
     db: AsyncSession
 ) -> Union[str, None]:
-    """
-    Create a new upload record in the database.
-
-    Args:
-        user_id (str): User ID.
-        file_name (str): Name of the uploaded file.
-        file_size (int): Size of the file in bytes.
-        path (str): File storage path.
-        db (AsyncSession): Async DB session.
-
-    Returns:
-        Union[str, None]: Success message or None on error.
-    """
     file_type = Path(path).parent.name
     now = datetime.utcnow()
 
@@ -50,9 +38,11 @@ async def create_upload_record(
     try:
         db.add(record)
         await db.commit()
+        app_logger.info(f"Upload record created for user_id={user_id}, file={file_name}")
         return "record saved successfully"
-    except SQLAlchemyError:
+    except SQLAlchemyError as e:
         await db.rollback()
+        app_logger.exception(f"Failed to create upload record for user_id={user_id}, file={file_name}: {e}")
         return None
 
 
@@ -64,20 +54,6 @@ async def mark_file_as_processed(
     message: str,
     time_taken_to_process: Optional[int] = None,
 ) -> Optional[UploadRecord]:
-    """
-    Update status of a processed file.
-
-    Args:
-        db (AsyncSession): Database session.
-        user_id (str): ID of the user.
-        file_name (str): Name of the processed file.
-        status (str): New processing status.
-        message (str): Processing result message.
-        time_taken_to_process (Optional[int]): Time taken in seconds.
-
-    Returns:
-        Optional[UploadRecord]: Updated record or None if not found.
-    """
     try:
         result = await db.execute(
             select(UploadRecord).where(
@@ -89,6 +65,7 @@ async def mark_file_as_processed(
         record = result.scalars().first()
 
         if not record:
+            app_logger.warning(f"No upload record found to update for user_id={user_id}, file={file_name}")
             return None
 
         record.status = status
@@ -100,9 +77,11 @@ async def mark_file_as_processed(
 
         await db.commit()
         await db.refresh(record)
+        app_logger.info(f"Upload record updated for user_id={user_id}, file={file_name}, status={status}")
         return record
-    except SQLAlchemyError:
+    except SQLAlchemyError as e:
         await db.rollback()
+        app_logger.exception(f"Error updating upload record for user_id={user_id}, file={file_name}: {e}")
         return None
 
 
@@ -110,16 +89,6 @@ async def get_file_list(
     user_id: str,
     db: AsyncSession
 ) -> List[UploadRecord]:
-    """
-    Get all non-deleted upload records for a user.
-
-    Args:
-        user_id (str): User ID.
-        db (AsyncSession): DB session.
-
-    Returns:
-        List[UploadRecord]: Upload records list.
-    """
     try:
         result = await db.execute(
             select(UploadRecord).where(
@@ -127,8 +96,11 @@ async def get_file_list(
                 UploadRecord.is_deleted == False
             )
         )
-        return result.scalars().all()
-    except SQLAlchemyError:
+        files = result.scalars().all()
+        app_logger.info(f"Fetched {len(files)} files for user_id={user_id}")
+        return files
+    except SQLAlchemyError as e:
+        app_logger.exception(f"Error fetching file list for user_id={user_id}: {e}")
         return []
 
 
@@ -136,13 +108,6 @@ async def update_db_statuses(
     db: AsyncSession,
     results: List[Dict]
 ) -> None:
-    """
-    Batch update upload record statuses after processing.
-
-    Args:
-        db (AsyncSession): DB session.
-        results (List[Dict]): Each dict must contain user_id, file_name, status, message, and optional time_taken_to_process.
-    """
     for result in results:
         await mark_file_as_processed(
             db=db,
@@ -161,18 +126,6 @@ async def create_user(
     email: str,
     password: str
 ) -> Union[User, str, None]:
-    """
-    Create a new user account.
-
-    Args:
-        db (AsyncSession): DB session.
-        username (str): Username.
-        email (str): Email (unique).
-        password (str): Plaintext password.
-
-    Returns:
-        Union[User, str, None]: Created user, error message if exists, or None on DB error.
-    """
     try:
         result = await db.execute(
             select(User).where((User.username == username) | (User.email == email))
@@ -180,6 +133,7 @@ async def create_user(
         existing_user = result.scalars().first()
 
         if existing_user:
+            app_logger.warning(f"User already exists: {email}")
             return "user already exists"
 
         hashed_pw = await hash_password(password)
@@ -196,10 +150,12 @@ async def create_user(
         db.add(user)
         await db.commit()
         await db.refresh(user)
+        app_logger.info(f"User created: {email}")
         return user
 
-    except SQLAlchemyError:
+    except SQLAlchemyError as e:
         await db.rollback()
+        app_logger.exception(f"Error creating user {email}: {e}")
         return None
 
 
@@ -208,24 +164,20 @@ async def authenticate_user(
     email: str,
     password: str
 ) -> Optional[User]:
-    """
-    Authenticate user using email and password.
+    try:
+        result = await db.execute(select(User).where(User.email == email))
+        user = result.scalars().first()
 
-    Args:
-        db (AsyncSession): DB session.
-        email (str): User email.
-        password (str): Plain password.
+        if not user:
+            app_logger.warning(f"Authentication failed: User not found - {email}")
+            return None
 
-    Returns:
-        Optional[User]: Authenticated user or None.
-    """
-    result = await db.execute(select(User).where(User.email == email))
-    user = result.scalars().first()
+        if not await verify_password(password, user.password_hash):
+            app_logger.warning(f"Authentication failed: Incorrect password - {email}")
+            return None
 
-    if not user:
+        app_logger.info(f"User authenticated: {email}")
+        return user
+    except SQLAlchemyError as e:
+        app_logger.exception(f"Error during authentication for {email}: {e}")
         return None
-
-    if not await verify_password(password, user.password_hash):
-        return None
-
-    return user

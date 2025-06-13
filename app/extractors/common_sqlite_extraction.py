@@ -1,5 +1,6 @@
 from typing import Dict, Any
 import aiosqlite
+from app.core.logger import app_logger 
 
 async def extract_data_from_connection(connection: aiosqlite.Connection) -> Dict[str, Any]:
     """
@@ -14,15 +15,21 @@ async def extract_data_from_connection(connection: aiosqlite.Connection) -> Dict
     result = {}
 
     try:
+        app_logger.info("Fetching table names from SQLite database...")
         async with connection.execute("SELECT name FROM sqlite_master WHERE type='table';") as cursor:
             tables = [row[0] async for row in cursor]
+        app_logger.info(f"Found tables: {tables}")
 
         for table_name in tables:
+            app_logger.info(f"Processing table: {table_name}")
+
             async with connection.execute(f'PRAGMA table_info("{table_name}");') as cursor:
                 columns = [col[1] async for col in cursor]
+            app_logger.debug(f"Columns in {table_name}: {columns}")
 
             async with connection.execute(f'SELECT * FROM "{table_name}";') as cursor:
                 rows = [row async for row in cursor]
+            app_logger.debug(f"Retrieved {len(rows)} rows from table {table_name}")
 
             table_data = [dict(zip(columns, row)) for row in rows]
 
@@ -32,7 +39,7 @@ async def extract_data_from_connection(connection: aiosqlite.Connection) -> Dict
             }
 
     except Exception as e:
-        print(f"An error occurred: {e}")
-        # Optionally re-raise or handle differently
+        app_logger.exception(f"An error occurred while extracting data from the database: {e}")
+        
 
     return result

@@ -1,36 +1,20 @@
 from fastapi import UploadFile
 from pathlib import Path
 from app.core.config import FILE_TYPE_MAP, UPLOAD_ROOT, PROCESSED_ROOT
+from app.core.logger import app_logger  
 import shutil
 
 
 async def get_file_category(extension: str) -> str:
-    """
-    Determines the file category based on its extension.
-
-    Args:
-        extension (str): File extension (e.g., '.pdf').
-
-    Returns:
-        str: Category name (e.g., 'pdf', 'image').
-    """
     for category, extensions in FILE_TYPE_MAP.items():
         if extension in extensions:
+            app_logger.debug(f"Extension '{extension}' matched category '{category}'")
             return category
+    app_logger.warning(f"Extension '{extension}' did not match any category. Using 'Others'.")
     return "Others"
 
 
 async def save_file(owner: str, file: UploadFile) -> str:
-    """
-    Saves an uploaded file under the structured path: UPLOAD_ROOT/owner/category/filename
-
-    Args:
-        owner (str): Username or identifier of the file owner.
-        file (UploadFile): Uploaded file object.
-
-    Returns:
-        str: Full path where the file was saved.
-    """
     extension = Path(file.filename).suffix.lower()
     category = await get_file_category(extension)
 
@@ -39,25 +23,21 @@ async def save_file(owner: str, file: UploadFile) -> str:
 
     file_path = owner_dir / file.filename
 
-    with open(file_path, "wb") as buffer:
-        buffer.write(await file.read())
+    try:
+        with open(file_path, "wb") as buffer:
+            buffer.write(await file.read())
+        app_logger.info(f"Saved file '{file.filename}' to '{file_path}'")
+    except Exception as e:
+        app_logger.exception(f"Failed to save file '{file.filename}': {e}")
+        raise
 
     return str(file_path)
 
 
 async def change_to_processed(file_path: str, category: str) -> str:
-    """
-    Moves a processed file to the processed directory.
-
-    Args:
-        file_path (str): Original path of the file.
-        category (str): Category folder name.
-
-    Returns:
-        str: New file path in the processed directory.
-    """
     original_path = Path(file_path)
     if not original_path.exists():
+        app_logger.error(f"File '{file_path}' does not exist.")
         raise FileNotFoundError(f"File {file_path} does not exist.")
 
     owner = original_path.parent.parent.name
@@ -65,43 +45,38 @@ async def change_to_processed(file_path: str, category: str) -> str:
     processed_dir.mkdir(parents=True, exist_ok=True)
 
     new_file_path = processed_dir / original_path.name
-    shutil.move(str(original_path), str(new_file_path))
+
+    try:
+        shutil.move(str(original_path), str(new_file_path))
+        app_logger.info(f"Moved file from '{original_path}' to '{new_file_path}'")
+    except Exception as e:
+        app_logger.exception(f"Failed to move file '{original_path}': {e}")
+        raise
 
     return str(new_file_path)
 
 
 async def remove_old_folder(owner_dir: Path) -> None:
-    """
-    Removes empty category folders and the owner folder if completely empty.
-
-    Args:
-        owner_dir (Path): Directory of the owner (e.g., UPLOAD_ROOT/owner).
-    """
-    for category_folder in owner_dir.iterdir():
-        if category_folder.is_dir() and not any(category_folder.iterdir()):
-            try:
+    try:
+        for category_folder in owner_dir.iterdir():
+            if category_folder.is_dir() and not any(category_folder.iterdir()):
                 category_folder.rmdir()
-            except Exception:
-                pass  # Silently ignore cleanup issues
+                app_logger.debug(f"Removed empty category folder: {category_folder}")
 
-    if not any(owner_dir.iterdir()):
-        try:
+        if not any(owner_dir.iterdir()):
             owner_dir.rmdir()
-        except Exception:
-            pass  # Silently ignore cleanup issues
+            app_logger.info(f"Removed empty owner folder: {owner_dir}")
+    except Exception as e:
+        app_logger.warning(f"Error during folder cleanup in '{owner_dir}': {e}")
 
 
 async def get_file_size(file: UploadFile) -> int:
-    """
-    Gets the size of an UploadFile in bytes.
-
-    Args:
-        file (UploadFile): File to measure.
-
-    Returns:
-        int: Size in bytes.
-    """
-    file.file.seek(0, 2)  # Seek to end
-    size = file.file.tell()
-    file.file.seek(0)     # Reset to start
-    return size
+    try:
+        file.file.seek(0, 2)  
+        size = file.file.tell()
+        file.file.seek(0)     
+        app_logger.debug(f"Size of file '{file.filename}' is {size} bytes.")
+        return size
+    except Exception as e:
+        app_logger.exception(f"Failed to get file size for '{file.filename}': {e}")
+        raise

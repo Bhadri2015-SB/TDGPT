@@ -1,124 +1,125 @@
+import os
 import io
 import time
 import json
-from pathlib import Path
-from typing import Dict, Any
-
 import aiofiles
+import subprocess
 from PIL import Image
 import pytesseract
 from pptx import Presentation
 
 from app.utils.file_handler import change_to_processed
-from app.utils.utils import summarize_text
 from app.services.image_caption import describe_image
-from app.extractors.pdf_extractor import ensure_output_dirs
-from app.core.groq_setup import groq_client, groq_model
+from app.extractors.pdf_extractor import ensure_dirs
+from app.core.logger import app_logger  
 
 
-async def extract_ppt_content(file_path: str) -> Dict[str, Any]:
-    """
-    Extracts text and image content from a PowerPoint file.
-    Applies OCR or visual description to images and stores outputs.
-    
-    Args:
-        file_path (str): Path to the .pptx file.
-    
-    Returns:
-        dict: Extraction result with slide metadata and processing info.
-    """
-    client = groq_client
-    model = groq_model
-    start_time = time.time()
+async def is_legacy_ppt(file_path: str) -> bool:
+    return file_path.lower().endswith(".ppt") and not file_path.lower().endswith(".pptx")
 
-    file = Path(file_path)
-    filename = file.stem
-    output_dirs = ensure_output_dirs()
+
+async def convert_ppt_to_pptx(ppt_path: str) -> str:
+    output_dir = os.path.dirname(ppt_path)
+    try:
+        app_logger.info(f"Converting legacy PPT to PPTX: {ppt_path}")
+        subprocess.run([
+            "libreoffice", "--headless", "--convert-to", "pptx", "--outdir", output_dir, ppt_path
+        ], check=True)
+        new_path = ppt_path.replace(".ppt", ".pptx")
+        if os.path.exists(new_path):
+            app_logger.info(f"Conversion successful: {new_path}")
+            return new_path
+        else:
+            app_logger.error("Conversion failed: .pptx file not found")
+            return None
+    except Exception as e:
+        app_logger.exception("Error converting PPT to PPTX")
+        raise RuntimeError(f"Failed to convert PPT to PPTX: {e}")
+
+
+async def extract_ppt_content(file_path):
+    start = time.time()
+    app_logger.info(f"Starting PPT extraction: {file_path}")
+
+    if await is_legacy_ppt(file_path):
+        app_logger.debug("Detected legacy .ppt file")
+        converted = await convert_ppt_to_pptx(file_path)
+        if not converted:
+            app_logger.error("PPT conversion failed.")
+            return {"error": "Failed to convert .ppt to .pptx"}
+        file_path = converted
 
     try:
-        prs = Presentation(str(file))
+        prs = Presentation(file_path)
     except Exception as e:
-        return {
-            "file_name": file.name,
-            "file_type": "pptx",
-            "status": "error",
-            "message": f"Failed to open PowerPoint file: {e}"
-        }
+        app_logger.exception("Failed to load PPTX file")
+        return {"error": str(e)}
 
-    slides_data = []
+    filename = os.path.splitext(os.path.basename(file_path))[0]
+    img_root, img_summary_dir, img_vision_dir = await ensure_dirs()
+    slides = []
 
     for i, slide in enumerate(prs.slides, start=1):
-        text_blocks = []
-        images, summary_files, vision_files = [], [], []
+        texts, ocr_texts, image_descriptions = [], [], []
 
         for shape in slide.shapes:
-            # Extract text
             if hasattr(shape, "text") and shape.text.strip():
-                text_blocks.append(shape.text.strip())
+                texts.append(shape.text.strip())
 
-            # Extract image if shape is a picture (type 13)
-            if shape.shape_type == 13:
+            if shape.shape_type == 13:  # Picture
                 try:
-                    img_bytes = shape.image.blob
-                    ext = shape.image.ext
+                    img_bytes, ext = shape.image.blob, shape.image.ext
                     img_name = f"{filename}_slide{i}_img.{ext}"
-                    img_path = output_dirs["img_root"] / img_name
+                    img_path = os.path.join(img_root, img_name)
 
                     async with aiofiles.open(img_path, "wb") as f:
                         await f.write(img_bytes)
-
-                    images.append(str(img_path))
 
                     pil_img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
                     ocr_text = pytesseract.image_to_string(pil_img).strip()
 
                     if ocr_text:
-                        summary_path = output_dirs["img_summary"] / f"{filename}_slide{i}_summary.json"
-                        async with aiofiles.open(summary_path, "w", encoding="utf-8") as f:
+                        ocr_texts.append(ocr_text)
+                        summary_file = os.path.join(img_summary_dir, f"{filename}_slide{i}_summary.json")
+                        async with aiofiles.open(summary_file, "w", encoding="utf-8") as f:
                             await f.write(json.dumps({"ocr_text": ocr_text}, indent=2))
-                        summary_files.append(str(summary_path))
                     else:
-                        vision_desc = await describe_image(str(img_path))
-                        vision_path = output_dirs["img_vision"] / f"{filename}_slide{i}_vision.json"
-                        async with aiofiles.open(vision_path, "w", encoding="utf-8") as f:
-                            await f.write(json.dumps({"description": vision_desc}, indent=2))
-                        vision_files.append(str(vision_path))
-
+                        description = await describe_image(img_path)
+                        image_descriptions.append(description)
+                        vision_file = os.path.join(img_vision_dir, f"{filename}_slide{i}_vision.json")
+                        async with aiofiles.open(vision_file, "w", encoding="utf-8") as f:
+                            await f.write(json.dumps({"description": description}, indent=2))
                 except Exception as e:
-                    vision_files.append(f"Image extraction failed: {e}")
+                    app_logger.exception(f"Error processing image on slide {i}")
 
-        # Optional: enable summarization here
-        # summary = await summarize_text("\n".join(text_blocks), client, model) if text_blocks else "No text."
-
-        slides_data.append({
+        slides.append({
             "slide_number": i,
-            "text_blocks": text_blocks,
-            "images": images,
-            "img_summary_files": summary_files,
-            "img_vision_files": vision_files,
-            # "summary": summary
+            "text_blocks": texts,
+            "img_summary_texts": ocr_texts,
+            "img_vision_descriptions": image_descriptions
         })
 
     result = {
         "metadata": {
-            "file_name": file.name,
+            "file_name": os.path.basename(file_path),
             "file_type": "pptx",
-            "file_size": f"{file.stat().st_size / (1024 * 1024):.2f} MB",
+            "file_size": f"{os.path.getsize(file_path)/1024/1024:.2f} MB",
             "slide_count": len(prs.slides)
         },
-        "slides": slides_data,
-        "summary": "PPT processed.",
-        "total_time_taken": f"{time.time() - start_time:.2f} sec"
+        "slides": slides,
+        "summary": "PPT processed",
+        "total_time_taken": f"{time.time() - start:.2f} sec"
     }
 
-    print("end of ppt extractor")
-
+    output_path = f"output/{filename}.json"
     try:
-        output_file = Path("output") / f"{filename}.json"
-        async with aiofiles.open(output_file, "w", encoding="utf-8") as f:
+        app_logger.debug(f"Writing PPT output JSON: {output_path}")
+        async with aiofiles.open(output_path, "w", encoding="utf-8") as f:
             await f.write(json.dumps(result, indent=2, ensure_ascii=False))
     except Exception as e:
+        app_logger.exception("Failed to write JSON output file")
         raise IOError(f"Failed to write JSON output file: {e}")
 
-    await change_to_processed(str(file), "PPT")
+    await change_to_processed(str(file_path), "PPT")
+    app_logger.info(f"PPT extraction completed: {file_path}")
     return result

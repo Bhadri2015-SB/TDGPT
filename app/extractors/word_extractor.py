@@ -11,9 +11,9 @@ from PIL import Image
 from docx import Document
 import pytesseract
 
+from app.core.logger import app_logger
 from app.utils.file_handler import change_to_processed
 
-# Output directory for extracted images
 OUTPUT_IMG_DIR = Path("output/images")
 OUTPUT_IMG_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -59,8 +59,8 @@ def extract_images_sync(doc: Document, output_dir: Path) -> List[str]:
 
                 if text:
                     image_texts.append(text)
-            except Exception:
-                # Skip corrupt image silently in production context
+            except Exception as e:
+                app_logger.warning(f"Failed to extract or OCR image from DOCX: {e}")
                 continue
 
     return image_texts
@@ -86,18 +86,28 @@ async def process_word_file(file_path: str) -> Dict[str, Any]:
     """
     start_time = time.time()
     file_name = os.path.basename(file_path)
-    doc = await asyncio.get_running_loop().run_in_executor(None, Document, file_path)
+    app_logger.info(f"Started processing Word file: {file_name}")
 
-    # Extract textual content
-    text = extract_text_from_paragraphs(doc.paragraphs)
-    tables = extract_tables_as_text(doc.tables)
-    image_texts = await extract_images_async(doc, OUTPUT_IMG_DIR)
+    try:
+        doc = await asyncio.get_running_loop().run_in_executor(None, Document, file_path)
+    except Exception as e:
+        app_logger.exception(f"Failed to open Word document: {file_name}")
+        raise RuntimeError(f"Failed to open Word document: {e}")
+
+    try:
+        text = extract_text_from_paragraphs(doc.paragraphs)
+        tables = extract_tables_as_text(doc.tables)
+        image_texts = await extract_images_async(doc, OUTPUT_IMG_DIR)
+        app_logger.info(f"Extracted text, tables, and image data from: {file_name}")
+    except Exception as e:
+        app_logger.exception(f"Error during extraction from Word file: {file_name}")
+        raise RuntimeError(f"Extraction failed for Word file: {e}")
 
     result = {
         "metadata": {
             "file_name": file_name,
             "file_type": "word",
-            "page_count": 1  # Estimated; .docx doesn't provide page count
+            "page_count": 1  
         },
         "pages": [
             {
@@ -114,8 +124,12 @@ async def process_word_file(file_path: str) -> Dict[str, Any]:
     try:
         async with aiofiles.open(output_path, "w", encoding="utf-8") as f:
             await f.write(json.dumps(result, indent=2, ensure_ascii=False))
+        app_logger.info(f"Saved extracted data to JSON: {output_path}")
     except Exception as e:
+        app_logger.exception(f"Failed to write JSON output for: {file_name}")
         raise IOError(f"Failed to write output JSON: {e}")
 
     await change_to_processed(file_path, "Word")
+    app_logger.info(f"Moved Word file to processed: {file_name}")
+
     return result
