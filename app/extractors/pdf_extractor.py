@@ -1,131 +1,136 @@
+import os
 import io
 import time
 import json
-from pathlib import Path
-from typing import Dict, Any
-
-import aiofiles
 import fitz
+import aiofiles
+import pdfplumber
 from PIL import Image
 import pytesseract
-
 from app.utils.file_handler import change_to_processed
-from app.utils.utils import summarize_text
 from app.services.image_caption import describe_image
 from app.core.groq_setup import groq_client, groq_model
+# from app.core.logger import #app_logger
 
 
-def ensure_output_dirs() -> Dict[str, Path]:
-    """Ensure necessary image output directories exist."""
-    base_dir = Path("output/images")
-    summary_dir = base_dir / "img_summary"
-    vision_dir = base_dir / "img_vision"
-    summary_dir.mkdir(parents=True, exist_ok=True)
-    vision_dir.mkdir(parents=True, exist_ok=True)
-    return {
-        "img_root": base_dir,
-        "img_summary": summary_dir,
-        "img_vision": vision_dir,
-    }
+async def ensure_dirs():
+    img_root = os.path.join("output", "images")
+    img_summary = os.path.join(img_root, "img_summary")
+    img_vision = os.path.join(img_root, "img_vision")
+    os.makedirs(img_summary, exist_ok=True)
+    os.makedirs(img_vision, exist_ok=True)
+    return img_root, img_summary, img_vision
 
 
-async def extract_pdf_content(file_path: str) -> Dict[str, Any]:
-    """
-    Extracts text and images from a PDF file, applies OCR or image description, and saves the result.
-
-    Args:
-        file_path (str): Path to the PDF file.
-
-    Returns:
-        dict: Structured result with metadata, page-wise content, and image analyses.
-    """
-    client = groq_client
-    model = groq_model
+async def extract_pdf_content(file_path):
     start_time = time.time()
-    file = Path(file_path)
-    filename = file.stem
+    filename = os.path.splitext(os.path.basename(file_path))[0]
+    img_root, img_summary_dir, img_vision_dir = await ensure_dirs()
 
-    output_dirs = ensure_output_dirs()
+    #app_logger.info(f"Starting PDF extraction: {file_path}")
 
     try:
-        pdf = fitz.open(str(file))
+        pdf = fitz.open(file_path)
+        plumber_pdf = pdfplumber.open(file_path)
+        #app_logger.debug(f"Opened PDF with {len(pdf)} pages")
     except Exception as e:
-        return {
-            "file_name": file.name,
-            "file_type": "pdf",
-            "status": "error",
-            "message": f"Failed to open PDF: {e}"
-        }
+        #app_logger.exception(f"Failed to open PDF file: {e}")
+        raise RuntimeError(f"Failed to open PDF: {e}")
 
     pages = []
 
-    for i, page in enumerate(pdf, start=1):
-        page_text = page.get_text("text").strip()
-        image_list = page.get_images(full=True)
+    for i, (fitz_page, plumber_page) in enumerate(zip(pdf, plumber_pdf.pages), start=1):
+        #app_logger.info(f"Processing page {i}")
+        text = fitz_page.get_text("text").strip()
+        image_list = fitz_page.get_images(full=True)
+        #app_logger.debug(f"Found {len(image_list)} images on page {i}")
 
-        images, summary_files, vision_files = [], [], []
+        images, summaries, visions = [], [], []
 
         for idx, img in enumerate(image_list, start=1):
+            xref = img[0]
+            base_image = pdf.extract_image(xref)
+            img_bytes, ext = base_image["image"], base_image["ext"]
+            img_name = f"{filename}_page{i}_img{idx}.{ext}"
+            img_path = os.path.join(img_root, img_name)
+
             try:
-                xref = img[0]
-                base_image = pdf.extract_image(xref)
-                img_bytes = base_image["image"]
-                ext = base_image["ext"]
-                image_filename = f"{filename}_page{i}_img{idx}.{ext}"
-                image_path = output_dirs["img_root"] / image_filename
-
-                async with aiofiles.open(image_path, "wb") as f:
+                async with aiofiles.open(img_path, "wb") as f:
                     await f.write(img_bytes)
-
-                images.append(str(image_path))
+                #app_logger.debug(f"Saved image: {img_name}")
+                images.append(img_path)
 
                 pil_img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
                 ocr_text = pytesseract.image_to_string(pil_img).strip()
 
                 if ocr_text:
-                    summary_file = output_dirs["img_summary"] / f"{filename}_page{i}_img{idx}_summary.json"
-                    async with aiofiles.open(summary_file, "w", encoding="utf-8") as f:
-                        await f.write(json.dumps({"ocr_text": ocr_text}, indent=2))
-                    summary_files.append(str(summary_file))
+                    summary = {"ocr_text": ocr_text}
+                    summaries.append(summary)
+                    summary_path = os.path.join(img_summary_dir, f"{filename}_page{i}_img{idx}_summary.json")
+                    async with aiofiles.open(summary_path, "w", encoding="utf-8") as f:
+                        await f.write(json.dumps(summary, indent=2))
+                    #app_logger.debug(f"OCR saved for: {img_name}")
                 else:
-                    vision_file = output_dirs["img_vision"] / f"{filename}_page{i}_img{idx}_vision.json"
-                    description = await describe_image(str(image_path))
-                    async with aiofiles.open(vision_file, "w", encoding="utf-8") as f:
-                        await f.write(json.dumps({"description": description}, indent=2))
-                    vision_files.append(str(vision_file))
+                    description = await describe_image(img_path)
+                    vision = {"description": description}
+                    visions.append(vision)
+                    vision_path = os.path.join(img_vision_dir, f"{filename}_page{i}_img{idx}_vision.json")
+                    async with aiofiles.open(vision_path, "w", encoding="utf-8") as f:
+                        await f.write(json.dumps(vision, indent=2))
+                    #app_logger.warning(f"OCR empty for {img_name}, fallback to vision description")
             except Exception as e:
-                vision_files.append(f"Image processing failed: {e}")
+                #app_logger.exception(f"Error processing image {img_name}: {e}")
+                continue
+
+        try:
+            tables_raw = plumber_page.extract_tables()
+            extracted_tables = []
+            for table in tables_raw:
+                if table:
+                    extracted_tables.append({
+                        "headers": table[0],
+                        "rows": table[1:]
+                    })
+            #app_logger.debug(f"Extracted {len(extracted_tables)} tables from page {i}")
+        except Exception as e:
+            #app_logger.exception(f"Error extracting tables from page {i}: {e}")
+            extracted_tables = []
 
         pages.append({
             "page_number": i,
-            "text": page_text or "No text found.",
-            "tables": "No table support in fitz.",
+            "text": text or "No text found.",
+            "tables": extracted_tables if extracted_tables else "No tables found.",
             "images": images,
-            "img_summary_files": summary_files,
-            "img_vision_files": vision_files,
+            "img_summary_files": summaries,
+            "img_vision_files": visions,
             "time_taken": f"{time.time() - start_time:.2f} sec"
         })
 
+    pdf.close()
+    plumber_pdf.close()
+
     result = {
         "metadata": {
-            "file_name": file.name,
+            "file_name": os.path.basename(file_path),
             "file_type": "pdf",
-            "file_size": f"{file.stat().st_size / (1024 * 1024):.2f} MB",
-            "page_count": len(pdf)
+            "file_size": f"{os.path.getsize(file_path) / (1024 * 1024):.2f} MB",
+            "page_count": len(pages)
         },
         "pages": pages,
         "overall_summary": "PDF extraction complete.",
         "total_time_taken": f"{time.time() - start_time:.2f} sec"
     }
 
-    pdf.close()
-
     try:
-        output_file = Path("output") / f"{filename}.json"
-        async with aiofiles.open(output_file, "w", encoding="utf-8") as f:
+        output_path = os.path.join("output", f"{filename}.json")
+        async with aiofiles.open(output_path, "w", encoding="utf-8") as f:
             await f.write(json.dumps(result, indent=2, ensure_ascii=False))
+        #app_logger.info(f"Extraction result saved to: {output_path}")
     except Exception as e:
+        #app_logger.exception(f"Failed to write JSON output: {e}")
         raise IOError(f"Failed to write JSON output file: {e}")
 
-    await change_to_processed(str(file), "PDF")
+    await change_to_processed(str(file_path), "PDF")
+    #app_logger.info(f"Finished processing PDF: {file_path}")
+
     return result
