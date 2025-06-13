@@ -89,7 +89,7 @@ async def process_owner_files_async(owner: str, user_id: str, db: AsyncSession):
 
     # Clean up old folder
     await remove_old_folder(owner_dir)
-
+    print("\n-------------------end---------------------------\n")
     return results
 
 
