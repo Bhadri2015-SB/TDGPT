@@ -10,7 +10,7 @@ from app.utils.file_handler import change_to_processed
 
 async def extract_sql_from_script(
     file_path: Union[str, Path],
-    output_dir: Union[str, Path] = "output/sql_script"
+    output_dir: Union[str, Path] = "output"
 ) -> List[Dict]:
     """
     Executes an SQL script file in-memory using SQLite and extracts the resulting data.

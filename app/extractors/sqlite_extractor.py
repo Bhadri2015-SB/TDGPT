@@ -10,7 +10,7 @@ from app.utils.file_handler import change_to_processed
 
 async def extract_sqlite_data(
     file_path: Union[str, Path],
-    output_dir: Union[str, Path] = "output/sqlite"
+    output_dir: Union[str, Path] = "output"
 ) -> List[Dict[str, Any]]:
     """
     Asynchronously extracts data from an SQLite database and writes it to a JSON file.

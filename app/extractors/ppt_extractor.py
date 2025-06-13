@@ -12,7 +12,7 @@ from pptx import Presentation
 from app.utils.file_handler import change_to_processed
 from app.utils.utils import summarize_text
 from app.services.image_caption import describe_image
-from app.extractors.pdf_extractor import ensure_dirs
+from app.extractors.pdf_extractor import ensure_output_dirs
 from app.core.groq_setup import groq_client, groq_model
 
 
@@ -33,7 +33,7 @@ async def extract_ppt_content(file_path: str) -> Dict[str, Any]:
 
     file = Path(file_path)
     filename = file.stem
-    output_dirs = ensure_dirs(filename)
+    output_dirs = ensure_output_dirs()
 
     try:
         prs = Presentation(str(file))
