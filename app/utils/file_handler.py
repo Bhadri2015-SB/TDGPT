@@ -17,7 +17,8 @@ async def get_file_category(extension: str) -> str:
     for category, extensions in FILE_TYPE_MAP.items():
         if extension in extensions:
             return category
-    return "Others"
+        
+    return 
 
 
 async def save_file(owner: str, file: UploadFile) -> str:
@@ -33,6 +34,8 @@ async def save_file(owner: str, file: UploadFile) -> str:
     """
     extension = Path(file.filename).suffix.lower()
     category = await get_file_category(extension)
+    if not category:
+        raise ValueError("Invalid file extension")
 
     owner_dir = UPLOAD_ROOT / owner / category
     owner_dir.mkdir(parents=True, exist_ok=True)
