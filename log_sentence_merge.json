@@ -1,0 +1,28 @@
+{
+  "strategy": "sentence_merge",
+  "file_name": "MIPS_Assembly_Language_small_163.pdf",
+  "total_chunks": 355,
+  "avg_tokens_per_chunk": 221.39,
+  "min_tokens": 6,
+  "max_tokens": 3383,
+  "sample_chunks": [
+    {
+      "chunk_id": 0,
+      "page_number": 1,
+      "tokens": 38,
+      "text": "MIPS\nAssembly Language\nProgramming \nusing QtSpim\nEd Jorgensen, Ph.D. Version 1.1.50\nJuly 2019\nNo tables found. a large metal object with a few wires"
+    },
+    {
+      "chunk_id": 1,
+      "page_number": 2,
+      "tokens": 172,
+      "text": "Cover image:\nMIPS R3000 Custom Chip\nhttp://commons.wikimedia.org/wiki/File:RCP-NUS_01.jpg\nSpim is copyrighted by James Larus and distributed under a BSD license. Copyright (c) 1990-2011, James R. Larus. All rights reserved. Copyright \u00a9 2013, 2014, 2015, 2016, 2017 by Ed Jorgensen\nYou are free: \nTo Share \u2014 to copy, distribute and transmit the work \nTo Remix \u2014 to adapt the work \nUnder the following conditions: \nAttribution \u2014 you must attribute the work in the manner specified by the author \nor licensor (but not in any way that suggests that they endorse you or your use of\nthe work). Noncommercial \u2014 you may not use this work for commercial purposes."
+    },
+    {
+      "chunk_id": 2,
+      "page_number": 2,
+      "tokens": 45,
+      "text": "Share Alike \u2014 if you alter, transform, or build upon this work, you may \ndistribute the resulting work only under the same or similar license to this one. No tables found. a black and white clock with numbers on it"
+    }
+  ]
+}
