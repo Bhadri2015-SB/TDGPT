@@ -108,3 +108,4 @@ async def get_file_size(file: UploadFile) -> int:
     size = file.file.tell()
     file.file.seek(0)     # Reset to start
     return size
+

@@ -1,3 +1,4 @@
+import os
 import time
 import asyncio
 from pathlib import Path
@@ -7,6 +8,7 @@ from app.services.extractors import PROCESSOR_MAP
 from app.utils.file_handler import get_file_category, remove_old_folder
 from app.utils.file_handler import UPLOAD_ROOT
 from app.services.database_service import make_processing, update_db_statuses
+from app.vector_db.pinecone_upsert import upsert_documents_to_pinecone
 
 async def process_file(file_path: Path, category: str, user_id: str) -> dict:
     """
@@ -88,10 +90,28 @@ async def process_owner_files_async(owner: str, user_id: str, db: AsyncSession):
 
     # Call to update database
     await update_db_statuses(db, results)
+    print("\n-------------------extraction end---------------------------\n")
+    await remove_old_folder(owner_dir)
+
+#     return results
+
+
+# async def process_and_store_files():
+    vector_store=[]
+    folder_path = "outputs"
+    for filename in os.listdir(folder_path):
+        file_path = os.path.join(folder_path, filename)
+        print(f"\n\nProcessing file: {file_path}\n\n")
+        if os.path.isfile(file_path):
+            #storing in vector db
+            vector_store.append(upsert_documents_to_pinecone(file_path))
+    print("\n-------------------await start---------------------------\n")
+    results = await asyncio.gather(*vector_store, return_exceptions=False)
 
     # Clean up old folder
-    await remove_old_folder(owner_dir)
-    print("\n-------------------end---------------------------\n")
+    print("\n-------------------stored end---------------------------\n")
+
+
     return results
 
 
