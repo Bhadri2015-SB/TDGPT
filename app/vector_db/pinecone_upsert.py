@@ -6,7 +6,7 @@ from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.vector_stores import PineconeVectorStore
 from llama_index import VectorStoreIndex, ServiceContext
 from llama_index.retrievers import VectorIndexRetriever
-from pinecone.grpc import PineconeGRPC
+from pinecone import Pinecone, ServerlessSpec
 import requests
 import json
 import os
@@ -41,7 +41,7 @@ async def load_documents_from_json(json_path):
     with open(json_path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
-    print("\n\n",data,"\n\n")
+    # print("\n\n",data,"\n\n")
     documents = []
     for page in data.get("pages", []):
         enriched_text = await combine_page_content(page)
@@ -60,18 +60,56 @@ async def embedding(model_name="BAAI/bge-small-en-v1.5", device="cpu", embed_bat
         embed_batch_size=embed_batch_size
     )
 
+
+def load_documents_from_multi_table_json(json_path: str):
+    with open(json_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    documents = []
+
+    for table_name, table_info in data.items():
+        columns = table_info.get("columns", [])
+        rows = table_info.get("data", [])
+
+        for row in rows:
+            content_lines = [f"{col}: {row.get(col, '')}" for col in columns]
+            content = f"Table: {table_name}\n" + "\n".join(content_lines)
+
+            metadata = {
+                "table": table_name,
+                "primary_id": row.get(f"{table_name}_id")
+            }
+
+            documents.append(Document(text=content.strip(), metadata=metadata))
+    print(documents)
+    return documents
+
 async def upsert_documents_to_pinecone(documents_path, index_name = "llama-integration"):
-    
-    documents = await load_documents_from_json(documents_path)
+    if documents_path.endswith("table.json"):
+        documents = load_documents_from_multi_table_json(documents_path)
+    else:
+        documents = await load_documents_from_json(documents_path)
     try:
         pinecone_api_key = os.getenv("PINECONE_API_KEY")
-        pc = PineconeGRPC(api_key=pinecone_api_key)
-        print(f"Connecting to Pinecone index: {index_name}")
+        pc = Pinecone(api_key=pinecone_api_key)
+        # print(f"Connecting to Pinecone index: {index_name}")
+        
+        #create index if it does not exist
+        # if not pc.list_indexes().contains(index_name):
+        # if not pc.has_index(index_name):
+        if index_name not in pc.list_indexes().names():
+            pc.create_index(
+                name=index_name,
+                # vector_type="dense",
+                dimension=384,  # Adjust based on your embedding model
+                metric="cosine",
+                spec=ServerlessSpec(cloud="aws", region="us-east-1")
+            )
         pinecone_index = pc.Index(index_name)
         vector_store = PineconeVectorStore(pinecone_index=pinecone_index)
-        print(f"Loaded Pinecone index: {pinecone_index.describe_index_stats()}")
+        # print(f"Loaded Pinecone index: {pinecone_index.describe_index_stats()}")
         embed_model = await embedding()
-        print("Using embedding model")
+        # print("Using embedding model")
         pipeline = IngestionPipeline(
             transformations=[
                 SemanticSplitterNodeParser(
@@ -83,16 +121,17 @@ async def upsert_documents_to_pinecone(documents_path, index_name = "llama-integ
                 ],
                 vector_store=vector_store  # Our new addition
             )
-        print("Starting upsert pipeline")
+        # print("Starting upsert pipeline")
         pipeline.run(documents=documents)
         print(pinecone_index.describe_index_stats())
         return pinecone_index.describe_index_stats()
+            # return None
     
     except Exception as e:
         print(f"Error during upsert: {e}")
         return {"error": str(e)}
 
-async def llm_call(retrieved_text):
+async def llm_call(retrieved_text, query):
     # Your Groq API key
     groq_api_key = os.getenv("GROQ_API_KEY")
 
@@ -107,13 +146,23 @@ async def llm_call(retrieved_text):
 
     # Create prompt
     prompt = f"Format and summarize the following content:\n\n{retrieved_text}"
-
+    systemPrompt = """You are an expert domain assistant that strictly adheres to the provided context to generate precise, accurate, and context-grounded answers.
+            Guidelines:
+            - Use only the retrieved context to answer the user's query.
+            - Do NOT hallucinate or fabricate any information.
+            - If the answer cannot be determined from the context, respond with:
+            "The answer is not available in the provided context."
+            - Preserve all code formatting, numbers, and technical structure.
+            - Prefer clarity and completeness over brevity.
+            - When helpful, use bullet points, step-by-step instructions, or short code examples.
+            - Never mention that context was provided — just answer naturally.
+            """
     # Construct payload
     payload = {
         "model": model,
         "messages": [
-            {"role": "system", "content": "You are a helpful assistant that formats and improves clarity of text."},
-            {"role": "user", "content": prompt}
+            {"role": "system", "content": systemPrompt},
+            {"role": "user", "content": f"Context: {retrieved_text}\n\nUser Query: {query}"}
         ],
         "temperature": 0.3,
         "max_tokens": 512
@@ -126,7 +175,7 @@ async def llm_call(retrieved_text):
             headers=headers,
             json=payload
         )
-
+        print(f"Response: {response.text}")
         # Parse response
         result = response.json()
         return result["choices"][0]["message"]["content"]
@@ -138,21 +187,21 @@ async def llm_call(retrieved_text):
 async def retrival(query, index_name="llama-integration", top_k=5):
     try:
         pinecone_api_key = os.getenv("PINECONE_API_KEY")
-        pc = PineconeGRPC(api_key=pinecone_api_key)
-        
+        pc = Pinecone(api_key=pinecone_api_key)
+        # print(f"Connecting to Pinecone index: {index_name}")
         pinecone_index = pc.Index(index_name)
         vector_store = PineconeVectorStore(pinecone_index=pinecone_index)
-        
+        # print(f"Loaded Pinecone index: {pinecone_index.describe_index_stats()}")
         embed_model = await embedding()
         
         service_context = ServiceContext.from_defaults(llm=None, embed_model=embed_model)
         index = VectorStoreIndex.from_vector_store(vector_store=vector_store, service_context=service_context)
-        
+        # print("Index created successfully")
         retriever = VectorIndexRetriever(index=index, similarity_top_k=top_k)
         nodes = retriever.retrieve(query)
-        
+        # print(f"Retrieved {len(nodes)} nodes for query: {query}")
         retrieved_text = "\n\n".join([node.node.text for node in nodes])
-        results = await llm_call(retrieved_text)
+        results = await llm_call(retrieved_text, query)
         return results
 
     except Exception as e:

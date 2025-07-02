@@ -14,7 +14,7 @@ async def query_retriever(query: str, user:User = Depends(get_current_user)):
     """
     try:
         # Call the retrieval function asynchronously
-        results = await retrival(query)
+        results = await retrival(query, user.username)
         
         if "error" in results:
             raise HTTPException(status_code=500, detail=results["error"])

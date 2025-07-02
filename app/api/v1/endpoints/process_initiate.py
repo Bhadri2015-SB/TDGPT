@@ -28,25 +28,6 @@ async def trigger_file_processing(user:User = Depends(get_current_user)):
     except Exception as e:
         raise HTTPException(status_code=500, detail="Processing error: " + str(e))
     
-# @router.post("/vector-store-process/")
-# async def vector_store_process(
-#     user: User = Depends(get_current_user),
-#     db: AsyncSession = Depends(get_db),
- 
-# ):
-#     """
-#     Endpoint to process files and store them in the vector store.
-    
-#     Args:
-#         user (User): The current user.
-#         db (AsyncSession): The database session.
-#         owner (str): The directory name corresponding to the owner.
-#         user_id (str): The user's ID.
-    
-#     Returns:
-#         dict: Results of the file processing and storage.
-#     """
-#     return await process_and_store_files()
 
 
     

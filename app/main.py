@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 
-from app.api.v1.endpoints import file_process, process_initiate, dev, retriever, user_route, auth
+from app.api.v1.endpoints import file_process, process_initiate, retriever, user_route, auth
 from app.db.session import Base, engine 
 
 app = FastAPI()

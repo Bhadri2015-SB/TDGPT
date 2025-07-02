@@ -1,3 +1,4 @@
+import os
 from fastapi import UploadFile
 from pathlib import Path
 from app.core.config import FILE_TYPE_MAP, UPLOAD_ROOT, PROCESSED_ROOT
@@ -72,7 +73,16 @@ async def change_to_processed(file_path: str, category: str) -> str:
 
     return str(new_file_path)
 
+async def delete_non_empty_dir(path):
+    if os.path.exists(path):
+        for root, dirs, files in os.walk(path, topdown=False):
+            for name in files:
+                os.remove(os.path.join(root, name))  # Delete files
+            for name in dirs:
+                os.rmdir(os.path.join(root, name))  # Delete empty subdirectories
+        os.rmdir(path)  # Finally delete the root directory
 
+        
 async def remove_old_folder(owner_dir: Path) -> None:
     """
     Removes empty category folders and the owner folder if completely empty.
@@ -80,6 +90,9 @@ async def remove_old_folder(owner_dir: Path) -> None:
     Args:
         owner_dir (Path): Directory of the owner (e.g., UPLOAD_ROOT/owner).
     """
+
+    await delete_non_empty_dir('output/images')
+
     for category_folder in owner_dir.iterdir():
         if category_folder.is_dir() and not any(category_folder.iterdir()):
             try:

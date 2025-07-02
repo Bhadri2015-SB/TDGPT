@@ -56,7 +56,7 @@ async def extract_excel_content(file_path, *_):
     }
 
     try:
-        output_path = f"output/{file_name}.json"
+        output_path = f"output/{file_name}_table.json"
         #app_logger.info(f"Writing extracted data to {output_path}")
         async with aiofiles.open(output_path, "w", encoding="utf-8") as f:
             await f.write(json.dumps(result, indent=2, ensure_ascii=False))

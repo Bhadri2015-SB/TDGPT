@@ -36,7 +36,7 @@ async def extract_sqlite_data(
 
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
-    output_file = output_path / f"{db_path.name}.json"
+    output_file = output_path / f"{db_path.name}_table.json"
 
     try:
         async with aiofiles.open(output_file, "w", encoding="utf-8") as f:
