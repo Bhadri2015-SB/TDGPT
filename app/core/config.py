@@ -28,8 +28,8 @@ FILE_TYPE_MAP = {
     "PPT": [".ppt", ".pptx"],
     "MD": [".md"],
     "Excel": [".xls", ".xlsx", ".csv"],
-    "Image": [".jpg", ".jpeg", ".png", ".gif"],
-    "Video": [".mp4", ".avi", ".mov"],
+    # "Image": [".jpg", ".jpeg", ".png", ".gif"],
+    # "Video": [".mp4", ".avi", ".mov"],
     "SQLITE": [".sqlite", ".db", ".sqlite3"],
     "SQL_SCRIPT": [".sql"],
     "JSON": [".json"]
