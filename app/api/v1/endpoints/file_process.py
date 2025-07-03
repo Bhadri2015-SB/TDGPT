@@ -20,17 +20,18 @@ async def upload_files(
     try:
         for file in files:
             if await is_existing_file(db, user.id, file.filename):
-                # raise HTTPException(
-                #     status_code=400,
-                #     detail=f"File '{file.filename}' already exists for user '{user.username}'."
-                # )
                 db_records.append({
-                "file_name": file.filename,
-                # "file_size": file_size,
-                "upload_status": "file already exists"
+                    "file_name": file.filename,
+                    "upload_status": "file already exists"
                 })
                 continue
             path = await save_file(user.username, file)
+            if path=="Unsupported file type":
+                db_records.append({
+                    "file_name": file.filename,
+                    "upload_status": path
+                })
+                continue
             file_size = await get_file_size(file)
             record = await create_upload_record(
                 user_id=user.id,

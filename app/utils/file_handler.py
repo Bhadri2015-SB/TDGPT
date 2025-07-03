@@ -36,7 +36,7 @@ async def save_file(owner: str, file: UploadFile) -> str:
     extension = Path(file.filename).suffix.lower()
     category = await get_file_category(extension)
     if not category:
-        raise ValueError("Invalid file extension")
+        return "Unsupported file type"
 
     owner_dir = UPLOAD_ROOT / owner / category
     owner_dir.mkdir(parents=True, exist_ok=True)

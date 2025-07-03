@@ -4,3 +4,4 @@ env
 __pycache__
 outputs
 uploads
+.pytest_cache
