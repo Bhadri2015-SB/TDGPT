@@ -2,6 +2,7 @@ from pathlib import Path
 from typing import List, Optional, Union, Dict
 from datetime import datetime
 
+from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
@@ -159,6 +160,23 @@ async def get_file_list(
         return result.scalars().all()
     except SQLAlchemyError:
         return []
+    
+async def is_existing_file(
+    db: AsyncSession,
+    user_id: str,
+    file_name: str) -> bool:
+    """Check if a file already exists for a user."""
+    try:
+        result = await db.execute(
+            select(UploadRecord).where(
+                UploadRecord.user_id == user_id,
+                UploadRecord.file_name == file_name,
+                UploadRecord.is_deleted == False
+            )
+        )
+        return result.scalars().first() is not None
+    except SQLAlchemyError:
+        return False
 
 
 async def update_db_statuses(
@@ -209,7 +227,7 @@ async def create_user(
         existing_user = result.scalars().first()
 
         if existing_user:
-            return "user already exists"
+            raise HTTPException(status_code=400, detail="User already exists")
 
         hashed_pw = await hash_password(password)
         now = datetime.utcnow()
@@ -227,9 +245,9 @@ async def create_user(
         await db.refresh(user)
         return user
 
-    except SQLAlchemyError:
+    except SQLAlchemyError as e:
         await db.rollback()
-        return None
+        raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
 
 
 async def authenticate_user(

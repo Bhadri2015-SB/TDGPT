@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi import status 
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,8 +17,17 @@ async def register_user(
     password: str = Form(...),
     db: AsyncSession = Depends(get_db)
 ):
+    
     user = await create_user(db, username=name, email=email, password=password)
     return user
+
+@router.get("/login")
+async def login_page():
+    """
+    Render the login page.
+    This is a placeholder function. In a real application, you would return an HTML template.
+    """
+    return JSONResponse(content={"message": "Please provide your login credentials."}, status_code=status.HTTP_200_OK)
 
 @router.post("/login")
 async def login(
@@ -50,4 +59,11 @@ async def login(
         samesite="lax",
         max_age=1800  
     )
+    return response
+
+
+@router.get("/logout")
+async def logout(request: Request):
+    response = RedirectResponse(url="/login",status_code=303)
+    response.delete_cookie(key="access_token")
     return response

@@ -1,4 +1,5 @@
-from typing import Dict
+from pathlib import Path
+from typing import Any, Dict, List
 from llama_index.node_parser import SemanticSplitterNodeParser
 from llama_index.ingestion import IngestionPipeline
 from llama_index.readers.schema import Document
@@ -37,6 +38,54 @@ async def combine_page_content(page: Dict) -> str:
         content = "\n".join([text, tables, image_vision_descriptions, image_ocr_descriptions])
         return content.strip()
 
+
+async def flatten_json(y: Dict[str, Any], prefix: str = "") -> Dict[str, str]:
+    """
+    Recursively flattens a nested dictionary.
+    Nested dicts/lists are unrolled with keys like "shared_on.twitter"
+    """
+    out = {}
+
+    def flatten(x, name=''):
+        if isinstance(x, dict):
+            for a in x:
+                flatten(x[a], f'{name}{a}.')
+        elif isinstance(x, list):
+            for i, a in enumerate(x):
+                flatten(a, f'{name}{i}.')
+        else:
+            out[name[:-1]] = str(x)  # convert all values to string
+
+    flatten(y, prefix)
+    return out
+
+
+async def load_json_to_documents_generic(file_path: str) -> List[Document]:
+    """Load a general JSON array and convert it to LlamaIndex Documents."""
+    with open(file_path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+
+    if not isinstance(data, list):
+        raise ValueError("JSON root must be a list of records.")
+
+    documents = []
+    for record in data:
+        flat_record = await flatten_json(record)
+
+        # Join all text fields into a large body for embedding
+        content = "\n".join(
+            f"{key.replace('.', ' ').title()}: {value}"
+            for key, value in flat_record.items()
+            if not key.lower().endswith(('id', 'views', 'likes')) and len(str(value).strip()) > 0
+        )
+
+        metadata = {k: v for k, v in flat_record.items() if k.lower().endswith(('id', 'title', 'author', 'category'))}
+
+        doc = Document(text=content, metadata=metadata)
+        documents.append(doc)
+
+    return documents
+
 async def load_documents_from_json(json_path):
     with open(json_path, "r", encoding="utf-8") as f:
         data = json.load(f)
@@ -61,7 +110,7 @@ async def embedding(model_name="BAAI/bge-small-en-v1.5", device="cpu", embed_bat
     )
 
 
-def load_documents_from_multi_table_json(json_path: str):
+async def load_documents_from_multi_table_json(json_path: str):
     with open(json_path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
@@ -84,32 +133,30 @@ def load_documents_from_multi_table_json(json_path: str):
     print(documents)
     return documents
 
-async def upsert_documents_to_pinecone(documents_path, index_name = "llama-integration"):
-    if documents_path.endswith("table.json"):
-        documents = load_documents_from_multi_table_json(documents_path)
+async def upsert_documents_to_pinecone(documents_path,user_id,category, index_name = "llama-integration"):
+    if category=="Excel" or "SQLITE" or "SQL_SCRIPT":#documents_path.endswith("table.json"):
+        documents = await load_documents_from_multi_table_json(documents_path)
+    elif documents_path.endswith(".json.json"):
+        documents = await load_json_to_documents_generic(documents_path)
     else:
         documents = await load_documents_from_json(documents_path)
     try:
         pinecone_api_key = os.getenv("PINECONE_API_KEY")
         pc = Pinecone(api_key=pinecone_api_key)
-        # print(f"Connecting to Pinecone index: {index_name}")
-        
-        #create index if it does not exist
-        # if not pc.list_indexes().contains(index_name):
-        # if not pc.has_index(index_name):
+  
         if index_name not in pc.list_indexes().names():
             pc.create_index(
                 name=index_name,
-                # vector_type="dense",
-                dimension=384,  # Adjust based on your embedding model
+                dimension=384, 
                 metric="cosine",
                 spec=ServerlessSpec(cloud="aws", region="us-east-1")
             )
+
         pinecone_index = pc.Index(index_name)
         vector_store = PineconeVectorStore(pinecone_index=pinecone_index)
-        # print(f"Loaded Pinecone index: {pinecone_index.describe_index_stats()}")
+
         embed_model = await embedding()
-        # print("Using embedding model")
+
         pipeline = IngestionPipeline(
             transformations=[
                 SemanticSplitterNodeParser(
@@ -121,16 +168,29 @@ async def upsert_documents_to_pinecone(documents_path, index_name = "llama-integ
                 ],
                 vector_store=vector_store  # Our new addition
             )
-        # print("Starting upsert pipeline")
+
         pipeline.run(documents=documents)
-        print(pinecone_index.describe_index_stats())
-        return pinecone_index.describe_index_stats()
+        path=Path(documents_path)
+        return {
+            "user_id": user_id,
+            "file_name": path.name.removesuffix(".json"),
+            "status": "Processed",
+            "message": "File successfully processed and embedded.",
+            # "time_taken_to_process": total_time or int(time.time() - start_time)
+        }
             # return None
     
     except Exception as e:
         print(f"Error during upsert: {e}")
-        return {"error": str(e)}
-
+        path=Path(documents_path)
+        return {
+            "user_id": user_id,
+            "file_name": path.name.removesuffix(".json"),
+            "status": "Embedding failed",
+            "message": f"Error during upsert: {e}",
+            # "time_taken_to_process": total_time or int(time.time() - start_time)
+        }
+    
 async def llm_call(retrieved_text, query):
     # Your Groq API key
     groq_api_key = os.getenv("GROQ_API_KEY")
@@ -145,7 +205,7 @@ async def llm_call(retrieved_text, query):
     }
 
     # Create prompt
-    prompt = f"Format and summarize the following content:\n\n{retrieved_text}"
+    # prompt = f"Format and summarize the following content:\n\n{retrieved_text}"
     systemPrompt = """You are an expert domain assistant that strictly adheres to the provided context to generate precise, accurate, and context-grounded answers.
             Guidelines:
             - Use only the retrieved context to answer the user's query.
@@ -175,7 +235,7 @@ async def llm_call(retrieved_text, query):
             headers=headers,
             json=payload
         )
-        print(f"Response: {response.text}")
+        # print(f"Response: {response.text}")
         # Parse response
         result = response.json()
         return result["choices"][0]["message"]["content"]

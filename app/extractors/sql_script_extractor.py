@@ -25,7 +25,7 @@ async def extract_sql_from_script(
     sql_path = Path(file_path)
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
-    output_file = output_path / f"{sql_path.name}_table.json"
+    output_file = output_path / f"{sql_path.name}.json"
 
     if not sql_path.exists():
         raise FileNotFoundError(f"SQL script not found at: {sql_path}")

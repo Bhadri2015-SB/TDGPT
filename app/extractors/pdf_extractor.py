@@ -9,7 +9,7 @@ from PIL import Image
 import pytesseract
 from app.utils.file_handler import change_to_processed
 from app.services.image_caption import describe_image
-from app.core.groq_setup import groq_client, groq_model
+# from app.core.groq_setup import groq_client, groq_model
 # from app.core.logger import #app_logger
 
 

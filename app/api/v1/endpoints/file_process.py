@@ -3,7 +3,7 @@ from typing import List
 from app.core.security import get_current_user
 from app.db.session import get_db
 from app.models.models import User
-from app.services.database_service import create_upload_record, get_file_list
+from app.services.database_service import create_upload_record, get_file_list, is_existing_file
 from app.utils.file_handler import get_file_size, save_file
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,6 +19,17 @@ async def upload_files(
     db_records = []
     try:
         for file in files:
+            if await is_existing_file(db, user.id, file.filename):
+                # raise HTTPException(
+                #     status_code=400,
+                #     detail=f"File '{file.filename}' already exists for user '{user.username}'."
+                # )
+                db_records.append({
+                "file_name": file.filename,
+                # "file_size": file_size,
+                "upload_status": "file already exists"
+                })
+                continue
             path = await save_file(user.username, file)
             file_size = await get_file_size(file)
             record = await create_upload_record(
