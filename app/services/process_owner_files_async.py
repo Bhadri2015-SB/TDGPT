@@ -4,6 +4,7 @@ import asyncio
 from pathlib import Path
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import OUTPUT_DIRECTORY
 from app.services.extractors import PROCESSOR_MAP
 from app.utils.file_handler import delete_non_empty_dir, get_file_category, remove_old_folder
 from app.utils.file_handler import UPLOAD_ROOT
@@ -69,6 +70,7 @@ async def process_owner_files_async(owner: str, user_id: str, db: AsyncSession):
     Returns:
         dict: Grouped results by file category.
     """
+    os.makedirs(OUTPUT_DIRECTORY, exist_ok=True)
     owner_dir = UPLOAD_ROOT / owner
     if not owner_dir.exists():
         raise FileNotFoundError("Owner directory not found")
