@@ -122,7 +122,7 @@ async def extract_pdf_content(file_path):
     }
 
     try:
-        output_path = os.path.join("output", f"{filename}.json")
+        output_path = os.path.join("output", f"{filename}.pdf.json")
         async with aiofiles.open(output_path, "w", encoding="utf-8") as f:
             await f.write(json.dumps(result, indent=2, ensure_ascii=False))
         #app_logger.info(f"Extraction result saved to: {output_path}")

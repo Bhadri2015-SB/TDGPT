@@ -13,6 +13,8 @@ import json
 import os
 import dotenv
 
+from app.utils.file_handler import get_file_category
+
 dotenv.load_dotenv()
 
 # async def enrich_page_content(page):
@@ -39,52 +41,68 @@ async def combine_page_content(page: Dict) -> str:
         return content.strip()
 
 
-async def flatten_json(y: Dict[str, Any], prefix: str = "") -> Dict[str, str]:
-    """
-    Recursively flattens a nested dictionary.
-    Nested dicts/lists are unrolled with keys like "shared_on.twitter"
-    """
-    out = {}
+# async def flatten_json(y: Dict[str, Any], prefix: str = "") -> Dict[str, str]:
+#     """
+#     Recursively flattens a nested dictionary.
+#     Nested dicts/lists are unrolled with keys like "shared_on.twitter"
+#     """
+#     out = {}
 
-    def flatten(x, name=''):
-        if isinstance(x, dict):
-            for a in x:
-                flatten(x[a], f'{name}{a}.')
-        elif isinstance(x, list):
-            for i, a in enumerate(x):
-                flatten(a, f'{name}{i}.')
-        else:
-            out[name[:-1]] = str(x)  # convert all values to string
+#     def flatten(x, name=''):
+#         if isinstance(x, dict):
+#             for a in x:
+#                 flatten(x[a], f'{name}{a}.')
+#         elif isinstance(x, list):
+#             for i, a in enumerate(x):
+#                 flatten(a, f'{name}{i}.')
+#         else:
+#             out[name[:-1]] = str(x)  # convert all values to string
 
-    flatten(y, prefix)
-    return out
+#     flatten(y, prefix)
+#     return out
 
 
-async def load_json_to_documents_generic(file_path: str) -> List[Document]:
-    """Load a general JSON array and convert it to LlamaIndex Documents."""
+# async def load_json_to_documents_generic(file_path: str) -> List[Document]:
+#     """Load a general JSON array and convert it to LlamaIndex Documents."""
+#     with open(file_path, 'r', encoding='utf-8') as f:
+#         data = json.load(f)
+
+#     if not isinstance(data, list):
+#         raise ValueError("JSON root must be a list of records.")
+
+#     documents = []
+#     for record in data:
+#         flat_record = await flatten_json(record)
+
+#         # Join all text fields into a large body for embedding
+#         content = "\n".join(
+#             f"{key.replace('.', ' ').title()}: {value}"
+#             for key, value in flat_record.items()
+#             if not key.lower().endswith(('id', 'views', 'likes')) and len(str(value).strip()) > 0
+#         )
+
+#         metadata = {k: v for k, v in flat_record.items() if k.lower().endswith(('id', 'title', 'author', 'category'))}
+
+#         doc = Document(text=content, metadata=metadata)
+#         documents.append(doc)
+
+#     return documents
+
+
+async def flattened_dict_to_document(file_path) -> List[Document]:
+
     with open(file_path, 'r', encoding='utf-8') as f:
-        data = json.load(f)
+        flattened = json.load(f)
+    lines = []
+    for key, value in flattened.items():
+        # Convert all values to string in case of numbers, bools etc.
+        line = f"{key}: {str(value)}"
+        lines.append(line)
 
-    if not isinstance(data, list):
-        raise ValueError("JSON root must be a list of records.")
+    combined_text = "\n".join(lines)
 
-    documents = []
-    for record in data:
-        flat_record = await flatten_json(record)
+    return [Document(text=combined_text, metadata={"file_name": Path(file_path).name.removesuffix(".json")})]
 
-        # Join all text fields into a large body for embedding
-        content = "\n".join(
-            f"{key.replace('.', ' ').title()}: {value}"
-            for key, value in flat_record.items()
-            if not key.lower().endswith(('id', 'views', 'likes')) and len(str(value).strip()) > 0
-        )
-
-        metadata = {k: v for k, v in flat_record.items() if k.lower().endswith(('id', 'title', 'author', 'category'))}
-
-        doc = Document(text=content, metadata=metadata)
-        documents.append(doc)
-
-    return documents
 
 async def load_documents_from_json(json_path):
     with open(json_path, "r", encoding="utf-8") as f:
@@ -110,34 +128,201 @@ async def embedding(model_name="BAAI/bge-small-en-v1.5", device="cpu", embed_bat
     )
 
 
-async def load_documents_from_multi_table_json(json_path: str):
-    with open(json_path, "r", encoding="utf-8") as f:
-        data = json.load(f)
+# async def load_documents_from_multi_table_json(json_path: str):
+#     with open(json_path, "r", encoding="utf-8") as f:
+#         data = json.load(f)
 
+#     documents = []
+
+#     for table_name, table_info in data.items():
+#         columns = table_info.get("columns", [])
+#         rows = table_info.get("data", [])
+
+#         for row in rows:
+#             content_lines = [f"{col}: {row.get(col, '')}" for col in columns]
+#             content = f"Table: {table_name}\n" + "\n".join(content_lines)
+
+#             metadata = {
+#                 "table": table_name,
+#                 "primary_id": row.get(f"{table_name}_id")
+#             }
+
+#             documents.append(Document(text=content.strip(), metadata=metadata))
+#     print(documents)
+#     return documents
+
+async def sqlite_data_to_documents(file_path) -> List[Document]:
+
+    with open(file_path, 'r', encoding='utf-8') as f:
+        db_data = json.load(f)
     documents = []
 
-    for table_name, table_info in data.items():
+    for table_name, table_info in db_data.items():
         columns = table_info.get("columns", [])
         rows = table_info.get("data", [])
 
+        lines = []
+        lines.append(f"Table: {table_name}")
+        lines.append(f"Columns: {', '.join(columns)}")
+        lines.append("Rows:")
+
         for row in rows:
-            content_lines = [f"{col}: {row.get(col, '')}" for col in columns]
-            content = f"Table: {table_name}\n" + "\n".join(content_lines)
+            # Format each row as a readable string
+            row_str = ", ".join(f"{k}={v}" for k, v in row.items())
+            lines.append(f"  - {row_str}")
 
-            metadata = {
-                "table": table_name,
-                "primary_id": row.get(f"{table_name}_id")
-            }
+        doc_text = "\n".join(lines)
 
-            documents.append(Document(text=content.strip(), metadata=metadata))
-    print(documents)
+        documents.append(Document(text=doc_text, metadata={"table_name": table_name}))
+
     return documents
 
-async def upsert_documents_to_pinecone(documents_path,user_id,category, index_name = "llama-integration"):
-    if category=="Excel" or "SQLITE" or "SQL_SCRIPT":#documents_path.endswith("table.json"):
-        documents = await load_documents_from_multi_table_json(documents_path)
-    elif documents_path.endswith(".json.json"):
-        documents = await load_json_to_documents_generic(documents_path)
+async def excel_data_to_documents(file_path) -> List[Document]:
+    """
+    Converts structured Excel/CSV extracted content into LlamaIndex Documents.
+
+    Args:
+        extracted (Dict[str, Any]): Output from extract_excel_content().
+
+    Returns:
+        List[Document]: List of LlamaIndex Documents (one per sheet).
+    """
+    with open(file_path, 'r', encoding='utf-8') as f:
+        extracted = json.load(f)
+    content_by_sheet = {}
+    file_name = extracted.get("metadata", {}).get("file_name", "unknown_file")
+
+    for item in extracted.get("content", []):
+        sheet = item["sheet"]
+        row_number = item["row_number"]
+        row_data = item["row_data"]
+
+        row_text = f"Row {row_number}: " + ", ".join(f"{k}={v}" for k, v in row_data.items())
+
+        if sheet not in content_by_sheet:
+            content_by_sheet[sheet] = []
+        content_by_sheet[sheet].append(row_text)
+
+    documents = []
+    for sheet, rows in content_by_sheet.items():
+        doc_text = f"Sheet: {sheet}\n" + "\n".join(rows)
+        documents.append(Document(text=doc_text, metadata={"file_name": file_name}))
+
+    return documents
+
+async def convert_markdown_json_to_documents(documents_path) -> List[Document]:
+
+    with open(documents_path, 'r', encoding='utf-8') as f:
+        parsed_data = json.load(f)
+
+    documents = []
+    metadata = parsed_data.get("metadata", {})
+    content_blocks = parsed_data.get("content", [])
+
+    current_text = ""
+    current_heading = None
+
+    for block in content_blocks:
+        block_type = block.get("type")
+
+        if block_type == "heading":
+            # Save the previous section as a document
+            if current_heading or current_text.strip():
+                documents.append(Document(
+                    text=current_text.strip(),
+                    metadata={
+                        "heading": current_heading,
+                        "file_name": metadata.get("file_name", "unknown")
+                    }
+                ))
+                current_text = ""
+            current_heading = block.get("text", "Untitled Section")
+
+        elif block_type == "paragraph":
+            current_text += block.get("text", "") + "\n"
+
+        elif block_type == "list":
+            for item in block.get("items", []):
+                current_text += f"- {item}\n"
+
+        elif block_type == "code_block":
+            language = block.get("language", "")
+            code = block.get("code", "")
+            current_text += f"```{language}\n{code}\n```\n"
+
+    # Final section
+    if current_heading or current_text.strip():
+        documents.append(Document(
+            text=current_text.strip(),
+            metadata={
+                "heading": current_heading,
+                "file_name": metadata.get("file_name", "unknown")
+            }
+        ))
+
+    return documents
+
+async def ppt_data_to_documents(document_path) -> List[Document]:
+    """
+    Converts extracted PPT slide data to LlamaIndex Documents.
+
+    Args:
+        extracted (Dict[str, Any]): Output from extract_ppt_content().
+
+    Returns:
+        List[Document]: List of LlamaIndex Documents (one per slide).
+    """
+
+    with open(document_path, 'r', encoding='utf-8') as f:
+            extracted = json.load(f)
+
+    file_name = extracted.get("metadata", {}).get("file_name", "unknown.pptx")
+    slides = extracted.get("slides", [])
+
+    documents = []
+
+    for slide in slides:
+        slide_num = slide.get("slide_number", -1)
+        text_blocks = slide.get("text_blocks", [])
+        ocr_texts = slide.get("img_summary_texts", [])
+        vision_descriptions = slide.get("img_vision_descriptions", [])
+
+        sections = []
+
+        if text_blocks:
+            sections.append("Text Blocks:\n" + "\n".join(f"- {text}" for text in text_blocks))
+        if ocr_texts:
+            sections.append("Image OCR Texts:\n" + "\n".join(f"- {text}" for text in ocr_texts))
+        if vision_descriptions:
+            sections.append("Image Descriptions:\n" + "\n".join(f"- {desc}" for desc in vision_descriptions))
+
+        doc_text = f"Slide {slide_num}\n" + "\n\n".join(sections)
+
+        documents.append(Document(
+            text=doc_text,
+            metadata={
+                "file_name": file_name,
+                "slide_number": slide_num
+            }
+        ))
+
+    return documents
+
+
+
+async def upsert_documents_to_pinecone(documents_path,user_id,index_name = "llama-integration"):
+    category = await get_file_category("."+documents_path.split('.')[-2])
+    print(f"Category determined: {category}")
+    if category in ( "SQLITE", "SQL_SCRIPT"):
+        documents = await sqlite_data_to_documents(documents_path)
+    elif category in ("Excel", "CSV"):
+        documents = await excel_data_to_documents(documents_path)
+    elif category=="JSON":
+        documents = await flattened_dict_to_document(documents_path)
+    elif category=="MD":
+        documents = await convert_markdown_json_to_documents(documents_path)
+    elif category=="PPT":
+        documents = await ppt_data_to_documents(documents_path)
     else:
         documents = await load_documents_from_json(documents_path)
     try:

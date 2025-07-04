@@ -112,7 +112,7 @@ async def extract_ppt_content(file_path):
         "total_time_taken": f"{time.time() - start:.2f} sec"
     }
 
-    output_path = f"output/{filename}.json"
+    output_path = f"output/{filename}.pptx.json"
     try:
         #app_logger.debug(f"Writing PPT output JSON: {output_path}")
         async with aiofiles.open(output_path, "w", encoding="utf-8") as f:

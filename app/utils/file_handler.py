@@ -91,7 +91,7 @@ async def remove_old_folder(owner_dir: Path) -> None:
         owner_dir (Path): Directory of the owner (e.g., UPLOAD_ROOT/owner).
     """
 
-    await delete_non_empty_dir('output/images')
+    
 
     for category_folder in owner_dir.iterdir():
         if category_folder.is_dir() and not any(category_folder.iterdir()):

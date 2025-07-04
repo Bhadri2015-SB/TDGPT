@@ -90,6 +90,7 @@ async def process_owner_files_async(owner: str, user_id: str, db: AsyncSession):
 
     # Call to update database
     await update_db_statuses(db, results)
+    await delete_non_empty_dir('output/images')
     print("\n-------------------extraction end---------------------------\n")
     
 
@@ -101,7 +102,7 @@ async def process_owner_files_async(owner: str, user_id: str, db: AsyncSession):
         print(f"\n\nProcessing file: {file_path}\n\n")
         if os.path.isfile(file_path):
             #storing in vector db
-            vector_store.append(upsert_documents_to_pinecone(file_path,user_id,category,owner))
+            vector_store.append(upsert_documents_to_pinecone(file_path,user_id,owner))
     print("\n-------------------await start---------------------------\n")
     results = await asyncio.gather(*vector_store, return_exceptions=False)
     await update_db_statuses(db, results)
