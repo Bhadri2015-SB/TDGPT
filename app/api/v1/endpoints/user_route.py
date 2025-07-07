@@ -19,7 +19,7 @@ async def register_user(
 ):
     
     user = await create_user(db, username=name, email=email, password=password)
-    return user
+    return {"message": "User registered successfully.", "username": user.username, "email": user.email ,"created_at": user.created_at}
 
 @router.get("/login")
 async def login_page():
