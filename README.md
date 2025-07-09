@@ -34,7 +34,7 @@ This is a **RAG (Retrieval-Augmented Generation) backend** supports various file
 ```bash
 git clone https://github.com/Bhadri2015-SB/Trocare.git
 cd Trocare
-git checkout -b TDGPT-11(Docker) origin/TDGPT-11(Docker)
+git checkout -b version-1 origin/version-1
 ```
 
 ### ✅ Step 2: Create a `.env` file
