@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 from typing import Any, Dict, List
 from llama_index.node_parser import SemanticSplitterNodeParser
 from llama_index.ingestion import IngestionPipeline
@@ -16,10 +17,6 @@ import dotenv
 from app.utils.file_handler import get_file_category
 
 dotenv.load_dotenv()
-
-# async def enrich_page_content(page):
-#     full_text = page["text"].strip()
-#     return full_text.strip()
 
 async def combine_page_content(page: Dict) -> str:
         text = page.get("text", "")
@@ -39,54 +36,6 @@ async def combine_page_content(page: Dict) -> str:
 
         content = "\n".join([text, tables, image_vision_descriptions, image_ocr_descriptions])
         return content.strip()
-
-
-# async def flatten_json(y: Dict[str, Any], prefix: str = "") -> Dict[str, str]:
-#     """
-#     Recursively flattens a nested dictionary.
-#     Nested dicts/lists are unrolled with keys like "shared_on.twitter"
-#     """
-#     out = {}
-
-#     def flatten(x, name=''):
-#         if isinstance(x, dict):
-#             for a in x:
-#                 flatten(x[a], f'{name}{a}.')
-#         elif isinstance(x, list):
-#             for i, a in enumerate(x):
-#                 flatten(a, f'{name}{i}.')
-#         else:
-#             out[name[:-1]] = str(x)  # convert all values to string
-
-#     flatten(y, prefix)
-#     return out
-
-
-# async def load_json_to_documents_generic(file_path: str) -> List[Document]:
-#     """Load a general JSON array and convert it to LlamaIndex Documents."""
-#     with open(file_path, 'r', encoding='utf-8') as f:
-#         data = json.load(f)
-
-#     if not isinstance(data, list):
-#         raise ValueError("JSON root must be a list of records.")
-
-#     documents = []
-#     for record in data:
-#         flat_record = await flatten_json(record)
-
-#         # Join all text fields into a large body for embedding
-#         content = "\n".join(
-#             f"{key.replace('.', ' ').title()}: {value}"
-#             for key, value in flat_record.items()
-#             if not key.lower().endswith(('id', 'views', 'likes')) and len(str(value).strip()) > 0
-#         )
-
-#         metadata = {k: v for k, v in flat_record.items() if k.lower().endswith(('id', 'title', 'author', 'category'))}
-
-#         doc = Document(text=content, metadata=metadata)
-#         documents.append(doc)
-
-#     return documents
 
 
 async def flattened_dict_to_document(file_path) -> List[Document]:
@@ -127,29 +76,11 @@ async def embedding(model_name="BAAI/bge-small-en-v1.5", device="cpu", embed_bat
         embed_batch_size=embed_batch_size
     )
 
-
-# async def load_documents_from_multi_table_json(json_path: str):
-#     with open(json_path, "r", encoding="utf-8") as f:
-#         data = json.load(f)
-
-#     documents = []
-
-#     for table_name, table_info in data.items():
-#         columns = table_info.get("columns", [])
-#         rows = table_info.get("data", [])
-
-#         for row in rows:
-#             content_lines = [f"{col}: {row.get(col, '')}" for col in columns]
-#             content = f"Table: {table_name}\n" + "\n".join(content_lines)
-
-#             metadata = {
-#                 "table": table_name,
-#                 "primary_id": row.get(f"{table_name}_id")
-#             }
-
-#             documents.append(Document(text=content.strip(), metadata=metadata))
-#     print(documents)
-#     return documents
+async def clean_name(name: str) -> str:
+    # Remove all non-alphabetic characters (i.e., keep only letters)
+    cleaned = re.sub(r'[^A-Za-z]', '', name)
+    # Convert to lowercase
+    return cleaned.lower()
 
 async def sqlite_data_to_documents(file_path) -> List[Document]:
 
@@ -328,16 +259,16 @@ async def upsert_documents_to_pinecone(documents_path,user_id,index_name = "llam
     try:
         pinecone_api_key = os.getenv("PINECONE_API_KEY")
         pc = Pinecone(api_key=pinecone_api_key)
-  
-        if index_name not in pc.list_indexes().names():
+        name = await clean_name(index_name)
+        if name not in pc.list_indexes().names():
             pc.create_index(
-                name=index_name,
+                name=name,
                 dimension=384, 
                 metric="cosine",
                 spec=ServerlessSpec(cloud="aws", region="us-east-1")
             )
 
-        pinecone_index = pc.Index(index_name)
+        pinecone_index = pc.Index(name)
         vector_store = PineconeVectorStore(pinecone_index=pinecone_index)
 
         embed_model = await embedding()
@@ -433,8 +364,9 @@ async def retrival(query, index_name="llama-integration", top_k=5):
     try:
         pinecone_api_key = os.getenv("PINECONE_API_KEY")
         pc = Pinecone(api_key=pinecone_api_key)
+        name = await clean_name(index_name)
         # print(f"Connecting to Pinecone index: {index_name}")
-        pinecone_index = pc.Index(index_name)
+        pinecone_index = pc.Index(name)
         vector_store = PineconeVectorStore(pinecone_index=pinecone_index)
         # print(f"Loaded Pinecone index: {pinecone_index.describe_index_stats()}")
         embed_model = await embedding()
