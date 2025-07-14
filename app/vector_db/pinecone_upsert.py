@@ -14,6 +14,7 @@ import json
 import os
 import dotenv
 
+from app.core import config
 from app.utils.file_handler import get_file_category
 
 dotenv.load_dotenv()
@@ -257,7 +258,7 @@ async def upsert_documents_to_pinecone(documents_path,user_id,index_name = "llam
     else:
         documents = await load_documents_from_json(documents_path)
     try:
-        pinecone_api_key = os.getenv("PINECONE_API_KEY")
+        pinecone_api_key = config.PINECONE_API_KEY
         pc = Pinecone(api_key=pinecone_api_key)
         name = await clean_name(index_name)
         if name not in pc.list_indexes().names():
@@ -309,7 +310,7 @@ async def upsert_documents_to_pinecone(documents_path,user_id,index_name = "llam
     
 async def llm_call(retrieved_text, query):
     # Your Groq API key
-    groq_api_key = os.getenv("GROQ_API_KEY")
+    groq_api_key = config.GROQ_API_KEY
 
     # Choose model available from Groq
     model = "llama3-8b-8192"
@@ -362,7 +363,7 @@ async def llm_call(retrieved_text, query):
 
 async def retrival(query, index_name="llama-integration", top_k=5):
     try:
-        pinecone_api_key = os.getenv("PINECONE_API_KEY")
+        pinecone_api_key = config.PINECONE_API_KEY
         pc = Pinecone(api_key=pinecone_api_key)
         name = await clean_name(index_name)
         # print(f"Connecting to Pinecone index: {index_name}")

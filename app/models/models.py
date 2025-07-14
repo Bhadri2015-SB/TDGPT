@@ -18,7 +18,9 @@ class User(Base):
     id = Column(String(36), primary_key=True, default=generate_uuid)
     username = Column(String(150), unique=True, nullable=False)
     email = Column(String(255), unique=True, nullable=False)
-    password_hash = Column(String(255), nullable=False)  
+    password_hash = Column(String(255), nullable=False) 
+    reset_otp = Column(String(255), nullable=True)  # For storing OTP
+    allow_password_reset = Column(Boolean, default=False)  # Flag to allow password reset 
 
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)

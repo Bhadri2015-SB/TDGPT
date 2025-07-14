@@ -5,11 +5,13 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 
 import dotenv, os
 
+from app.core import config
+
 # Replace with your MySQL details
 
 dotenv.load_dotenv()
 
-URL_DATABASE = os.getenv("URL_DATABASE")
+URL_DATABASE = config.URL_DATABASE
 
 engine = create_async_engine(URL_DATABASE, echo=True)  
 

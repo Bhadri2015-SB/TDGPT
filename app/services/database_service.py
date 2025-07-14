@@ -276,3 +276,132 @@ async def authenticate_user(
         return None
 
     return user
+
+async def get_user_by_email(
+    db: AsyncSession,
+    email: str
+) -> Optional[User]:
+    """
+    Get user by email.
+
+    Args:
+        db (AsyncSession): DB session.
+        email (str): User email.
+
+    Returns:
+        Optional[User]: User object or None if not found.
+    """
+    result = await db.execute(select(User).where(User.email == email))
+    return result.scalars().first()
+
+async def update_user_password(
+    db: AsyncSession,
+    email: str,
+    new_password: str
+) -> Optional[User]:
+    """
+    Update user's password.
+
+    Args:
+        db (AsyncSession): DB session.
+        user_id (str): User ID.
+        new_password (str): New plaintext password.
+
+    Returns:
+        Optional[User]: Updated user object or None if not found.
+    """
+    user = await db.execute(
+        select(User).where(User.email == email)
+    )
+    
+    user = user.scalars().first()
+
+    if not user:
+        return "user not found"
+
+    if not user.allow_password_reset:
+        raise HTTPException(status_code=400, detail="OTP not verified")
+
+    user.password_hash = await hash_password(new_password)
+    user.updated_at = datetime.utcnow()
+    user.reset_otp = None  # Clear OTP after password reset
+    user.allow_password_reset = False  # Reset the flag after password reset
+    try:
+        await db.commit()
+        await db.refresh(user)
+        return user
+    except SQLAlchemyError as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
+    
+async def update_user_otp(
+    db: AsyncSession,
+    user_id: str,
+    otp: str
+) -> Optional[User]:
+    """
+    Update user's OTP.
+
+    Args:
+        db (AsyncSession): DB session.
+        user_id (str): User ID.
+        otp (str): New OTP.
+
+    Returns:
+        Optional[User]: Updated user object or None if not found.
+    """
+    user = await db.execute(
+        select(User).where(User.id == user_id)
+    )
+    # print(user)
+    user = user.scalars().first()
+    if not user:
+        return None
+
+    user.reset_otp = otp
+    user.updated_at = datetime.utcnow()
+
+    try:
+        await db.commit()
+        await db.refresh(user)
+        return user
+    except SQLAlchemyError as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
+    
+async def verify_user_otp(
+    db: AsyncSession,
+    email: str,
+    otp: str
+) -> bool:
+    """
+    Verify user's OTP.
+
+    Args:
+        db (AsyncSession): DB session.
+        user_id (str): User ID.
+        otp (str): OTP to verify.
+
+    Returns:
+        bool: True if OTP matches, False otherwise.
+    """
+    user = await db.execute(
+        select(User).where(User.email == email)
+    )
+
+    user = user.scalars().first()
+    
+    if not user:
+        return False
+
+    if user.reset_otp == otp:
+        user.allow_password_reset = True
+        user.updated_at = datetime.utcnow()
+        try:
+            await db.commit()
+            await db.refresh(user)
+            return True
+        except SQLAlchemyError as e:
+            await db.rollback()
+            raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
+    return False
