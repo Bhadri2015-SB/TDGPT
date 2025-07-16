@@ -18,7 +18,7 @@ services:
     container_name: mysql_db
     environment:
       MYSQL_ROOT_PASSWORD: Bhadri_2919
-      MYSQL_DATABASE: tdgpt
+      MYSQL_DATABASE: trocare_db
     ports:
       - "3307:3306"
     volumes:
