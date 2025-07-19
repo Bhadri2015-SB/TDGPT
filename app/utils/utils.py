@@ -1,6 +1,9 @@
 import os
 import aiofiles
+from typing import List, Dict, Optional
+import requests
 from app.core.config import IMAGE_OUTPUT_DIR
+from app.core import config
 
 # async def save_image(element, pdf_name, page_number, image_count):
 #     os.makedirs(IMAGE_OUTPUT_DIR, exist_ok=True)
@@ -43,3 +46,66 @@ async def summarize_text(text, groq_client, model):
 #     async with aiofiles.open(image_path, "wb") as f:
 #         await f.write(image_bytes)
 #     return image_path
+
+
+async def groq_chat_completion(
+    messages: List[Dict[str, str]], 
+    system_prompt: Optional[str] = None,
+    model: str = "llama3-8b-8192",
+    temperature: float = 0.3,
+    max_tokens: int = 512
+) -> str:
+    """
+    Make a chat completion request to Groq API.
+    """
+    try:
+        # Get API key
+        groq_api_key = config.GROQ_API_KEY
+        if not groq_api_key:
+            raise ValueError("GROQ_API_KEY not found in configuration")
+        
+        # Prepare headers
+        headers = {
+            "Authorization": f"Bearer {groq_api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        # Prepare messages
+        chat_messages = []
+        if system_prompt:
+            chat_messages.append({"role": "system", "content": system_prompt})
+        
+        chat_messages.extend(messages)
+        
+        # Prepare payload
+        payload = {
+            "model": model,
+            "messages": chat_messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens
+        }
+        
+        # Make request
+        response = requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers=headers,
+            json=payload
+        )
+        
+        # Check if request was successful
+        if response.status_code != 200:
+            raise Exception(f"API request failed with status {response.status_code}: {response.text}")
+        
+        # Parse response
+        result = response.json()
+        
+        # Extract content
+        if "choices" in result and len(result["choices"]) > 0:
+            if "message" in result["choices"][0] and "content" in result["choices"][0]["message"]:
+                return result["choices"][0]["message"]["content"]
+        
+        raise Exception("Unexpected response structure from Groq API")
+        
+    except Exception as e:
+        print(f"Error in groq_chat_completion: {e}")
+        raise e

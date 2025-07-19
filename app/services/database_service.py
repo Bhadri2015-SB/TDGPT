@@ -8,8 +8,11 @@ from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.db.session import get_db
-from app.models.models import UploadRecord, User
+from app.models.models import UploadRecord, User, Document
 from app.core.security import hash_password, verify_password
+import hashlib
+import uuid
+import os
 
 # -------------------- Upload Record Operations --------------------
 
@@ -405,3 +408,220 @@ async def verify_user_otp(
             await db.rollback()
             raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
     return False
+
+# -------------------- Document Operations --------------------
+
+async def create_document_record(
+    user_id: str,
+    upload_record_id: str,
+    file_path: str,
+    file_size: int,
+    file_type: str,
+    db: AsyncSession,
+    processing_status: str = "pending",
+    embedding_model: str = None,
+    pinecone_index_name: str = None,
+    total_chunks: int = None,
+    is_public: bool = False,
+    metadata: dict = None,
+    processing_started_at: datetime = None
+) -> Union[str, None]:
+    """
+    Create a new document record in the database.
+
+    Args:
+        user_id (str): User ID.
+        upload_record_id (str): Associated upload record ID.
+        file_path (str): Path to the original file.
+        file_size (int): Size of the file in bytes.
+        file_type (str): Type of the file (PDF, Word, etc.).
+        db (AsyncSession): Async DB session.
+        processing_status (str): Processing status.
+        embedding_model (str): Model used for embeddings.
+        pinecone_index_name (str): Name of the Pinecone index.
+        total_chunks (int): Number of chunks created.
+        is_public (bool): Whether the document is public.
+        metadata (dict): Additional metadata.
+
+    Returns:
+        Union[str, None]: Document ID or None on error.
+    """
+    try:
+        # Generate file hash
+        file_hash = None
+        if os.path.exists(file_path):
+            with open(file_path, 'rb') as f:
+                file_hash = hashlib.sha256(f.read()).hexdigest()
+
+        # Get original filename from path
+        original_filename = os.path.basename(file_path)
+
+        now = datetime.utcnow()
+        document_id = str(uuid.uuid4())
+
+        document = Document(
+            id=document_id,
+            original_filename=original_filename,
+            file_size=file_size,
+            file_type=file_type,
+            file_hash=file_hash,
+            user_id=user_id,
+            upload_record_id=upload_record_id,
+            processing_status=processing_status,
+            processing_started_at=processing_started_at,
+            embedding_model=embedding_model,
+            pinecone_index_name=pinecone_index_name,
+            total_chunks=total_chunks,
+            is_public=is_public,
+            metadata=metadata,
+            created_at=now,
+            updated_at=now
+        )
+
+        db.add(document)
+        await db.commit()
+        return document_id
+    except SQLAlchemyError as e:
+        await db.rollback()
+        print(f"Error creating document record: {e}")
+        return None
+
+
+async def update_document_processing_status(
+    db: AsyncSession,
+    document_id: str,
+    processing_status: str,
+    processing_error: str = None,
+    total_chunks: int = None,
+    embedding_model: str = None,
+    pinecone_index_name: str = None,
+    processing_started_at: datetime = None,
+    processing_completed_at: datetime = None
+) -> bool:
+    """
+    Update document processing status and related fields.
+
+    Args:
+        db (AsyncSession): Async DB session.
+        document_id (str): Document ID to update.
+        processing_status (str): New processing status.
+        processing_error (str): Error message if any.
+        total_chunks (int): Number of chunks created.
+        embedding_model (str): Model used for embeddings.
+        pinecone_index_name (str): Name of the Pinecone index.
+        processing_started_at (datetime): When processing started.
+        processing_completed_at (datetime): When processing completed.
+
+    Returns:
+        bool: True if updated successfully, False otherwise.
+    """
+    try:
+        result = await db.execute(
+            select(Document).where(Document.id == document_id)
+        )
+        document = result.scalar_one_or_none()
+
+        if not document:
+            return False
+
+        # Update fields
+        document.processing_status = processing_status
+        document.updated_at = datetime.utcnow()
+        
+        if processing_error:
+            document.processing_error = processing_error
+        if total_chunks:
+            document.total_chunks = total_chunks
+        if embedding_model:
+            document.embedding_model = embedding_model
+        if pinecone_index_name:
+            document.pinecone_index_name = pinecone_index_name
+        if processing_started_at:
+            document.processing_started_at = processing_started_at
+        if processing_completed_at:
+            document.processing_completed_at = processing_completed_at
+
+        await db.commit()
+        return True
+    except SQLAlchemyError as e:
+        await db.rollback()
+        print(f"Error updating document status: {e}")
+        return False
+
+
+async def get_document_by_upload_record(
+    db: AsyncSession,
+    upload_record_id: str
+) -> Optional[Document]:
+    """
+    Get document by upload record ID.
+
+    Args:
+        db (AsyncSession): Async DB session.
+        upload_record_id (str): Upload record ID.
+
+    Returns:
+        Optional[Document]: Document if found, None otherwise.
+    """
+    try:
+        result = await db.execute(
+            select(Document).where(
+                Document.upload_record_id == upload_record_id,
+                Document.is_deleted == False
+            )
+        )
+        return result.scalar_one_or_none()
+    except SQLAlchemyError:
+        return None
+
+
+async def create_document_records_for_existing_uploads(db: AsyncSession):
+    """
+    Create Document records for existing upload records that don't have corresponding documents.
+    This is a one-time migration function.
+    
+    Args:
+        db (AsyncSession): Async database session.
+    """
+    try:
+        # Get all upload records that are processed but don't have document records
+        result = await db.execute(
+            select(UploadRecord).where(
+                UploadRecord.status.in_(["Processed", "Processing"]),
+                UploadRecord.is_deleted == False
+            )
+        )
+        upload_records = result.scalars().all()
+        
+        created_count = 0
+        
+        for upload_record in upload_records:
+            # Check if document record already exists
+            existing_doc = await get_document_by_upload_record(db, upload_record.id)
+            
+            if not existing_doc:
+                # Create document record for existing upload
+                document_id = await create_document_record(
+                    user_id=upload_record.user_id,
+                    upload_record_id=upload_record.id,
+                    file_path=f"uploads/processed/{upload_record.file_name}",  # Estimated path
+                    file_size=upload_record.file_size,
+                    file_type=upload_record.file_type,
+                    db=db,
+                    processing_status="completed" if upload_record.status == "Processed" else "processing",
+                    embedding_model="text-embedding-3-small",  # Default model
+                    pinecone_index_name="tdgpt",  # Default index
+                    total_chunks=0,  # We don't know the chunks for existing files
+                    is_public=False
+                )
+                
+                if document_id:
+                    created_count += 1
+                    print(f"Created document record {document_id} for existing upload {upload_record.file_name}")
+        
+        print(f"Created {created_count} document records for existing uploads")
+        return created_count
+        
+    except Exception as e:
+        print(f"Error creating document records for existing uploads: {e}")
+        return 0

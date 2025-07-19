@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse, HTMLResponse
 from fastapi import status 
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,14 +14,16 @@ router = APIRouter()
 
 @router.post("/register")
 async def register_user(
-    payload: RegisterRequest,
+    name: str = Form(..., description="Enter your name"),
+    email: str = Form(..., description="Enter your email"),
+    password: str = Form(..., description="Enter your password"),
     db: AsyncSession = Depends(get_db)
 ):
     user = await create_user(
         db,
-        username=payload.name,
-        email=payload.email,
-        password=payload.password
+        username=name,
+        email=email,
+        password=password
     )
     return {
         "message": "User registered successfully.",
@@ -40,10 +42,11 @@ async def login_page():
 
 @router.post("/login")
 async def login(
-    payload: LoginRequest,
+    email: str = Form(..., description="Enter your email"),
+    password: str = Form(..., description="Enter your password"),
     db: AsyncSession = Depends(get_db)
 ):
-    user = await authenticate_user(db, payload.email, payload.password)
+    user = await authenticate_user(db, email, password)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -76,10 +79,10 @@ async def logout(request: Request):
     return response
 
 @router.post("/forgot-password")
-async def forgot_password_page(payload: ForgotPasswordRequest, db: AsyncSession = Depends(get_db)):
-    
-    email = payload.email
-    
+async def forgot_password_page(
+    email: str = Form(..., description="Enter your email"),
+    db: AsyncSession = Depends(get_db)
+):
     user = await get_user_by_email(db, email)
     if not user:
         raise HTTPException(
@@ -110,14 +113,14 @@ async def forgot_password_page(payload: ForgotPasswordRequest, db: AsyncSession 
 
 @router.post("/otp-verify")
 async def otp_verify(
-    request: Request,
-    otp: VerifyOTPRequest,
+    email: str = Form(..., description="Enter your email"),
+    otp: str = Form(..., description="Enter OTP from email"),
     db: AsyncSession = Depends(get_db)
 ):
     verify = await verify_user_otp(
         db=db,
-        email=otp.email,
-        otp=otp.otp)
+        email=email,
+        otp=otp)
     
     if not verify:
         raise HTTPException(
@@ -133,11 +136,11 @@ async def otp_verify(
 
 @router.post("/reset-password")
 async def reset_password(
-    request: Request,
-    new_password: ResetPasswordRequest,
+    email: str = Form(..., description="Enter your email"),
+    new_password: str = Form(..., description="Enter new password"),
     db: AsyncSession = Depends(get_db)
 ):
-    update_password = await update_user_password(db=db, email = new_password.email, new_password=new_password.new_password)
+    update_password = await update_user_password(db=db, email=email, new_password=new_password)
     if not update_password:
         raise HTTPException(
             status_code=400,

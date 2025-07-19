@@ -1,5 +1,3 @@
-version: '3.9'
-
 services:
   backend:
     image: bhadri2919/trocare-backend:v1
@@ -17,7 +15,7 @@ services:
     image: mysql:8
     container_name: mysql_db
     environment:
-      MYSQL_ROOT_PASSWORD: Bhadri_2919
+      MYSQL_ROOT_PASSWORD: Root
       MYSQL_DATABASE: tdgpt
     ports:
       - "3307:3306"

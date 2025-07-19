@@ -19,6 +19,11 @@ from app.utils.file_handler import get_file_category
 
 dotenv.load_dotenv()
 
+
+async def get_available_indexes():
+    pc = Pinecone(api_key=config.PINECONE_API_KEY)
+    return pc.list_indexes().names()
+
 async def combine_page_content(page: Dict) -> str:
         text = page.get("text", "")
 
@@ -352,13 +357,40 @@ async def llm_call(retrieved_text, query):
             headers=headers,
             json=payload
         )
-        # print(f"Response: {response.text}")
+        
+        # Check if request was successful
+        if response.status_code != 200:
+            print(f"API request failed with status {response.status_code}: {response.text}")
+            return {"error": f"API request failed with status {response.status_code}"}
+        
         # Parse response
-        result = response.json()
+        try:
+            result = response.json()
+        except json.JSONDecodeError as e:
+            print(f"Failed to parse JSON response: {e}")
+            print(f"Response text: {response.text}")
+            return {"error": f"Failed to parse API response: {str(e)}"}
+        
+        # Check if the response has the expected structure
+        if "choices" not in result or len(result["choices"]) == 0:
+            print(f"Unexpected response structure: {result}")
+            return {"error": "Unexpected response structure from API"}
+            
+        if "message" not in result["choices"][0] or "content" not in result["choices"][0]["message"]:
+            print(f"Unexpected message structure: {result}")
+            return {"error": "Unexpected message structure from API"}
+            
         return result["choices"][0]["message"]["content"]
     
     except requests.exceptions.RequestException as e:
         print(f"Error during LLM call: {e}")
+        return {"error": str(e)}
+    except KeyError as e:
+        print(f"KeyError during response parsing: {e}")
+        print(f"Response content: {response.text if 'response' in locals() else 'No response'}")
+        return {"error": f"Response parsing error: {str(e)}"}
+    except Exception as e:
+        print(f"Unexpected error during LLM call: {e}")
         return {"error": str(e)}
 
 async def retrival(query, index_name="llama-integration", top_k=5):
