@@ -10,7 +10,7 @@ from app.schemas.response_model import ForgotPasswordRequest, LoginRequest, Regi
 from app.services.database_service import authenticate_user, create_user, get_user_by_email, update_user_otp, update_user_password, verify_user_otp
 from app.services.mailing_service import generate_otp, send_password_reset_email
 
-router = APIRouter()
+router=APIRouter(tags=["Authentication"])
 
 @router.post("/register")
 async def register_user(
