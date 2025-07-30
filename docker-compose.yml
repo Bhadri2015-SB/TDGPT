@@ -1,5 +1,6 @@
 services:
   backend:
+    image: atchayachandrasekaran/trocare-backend:v2.0
     build: .
     container_name: rag_backend
     ports:
