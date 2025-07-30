@@ -1,19 +1,14 @@
-from sqlalchemy import create_engine
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-
-import dotenv, os
-
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.ext.declarative import declarative_base
 from app.core import config
 
-# Replace with your MySQL details
 
-dotenv.load_dotenv()
+DATABASE_URL = config.DB_URL  
 
-URL_DATABASE = config.URL_DATABASE
 
-engine = create_async_engine(URL_DATABASE, echo=True)  
+engine = create_async_engine(DATABASE_URL, echo=True, future=True)
+
 
 SessionLocal = sessionmaker(
     engine,
@@ -25,9 +20,11 @@ SessionLocal = sessionmaker(
 
 Base = declarative_base()
 
+
 async def get_db():
     async with SessionLocal() as db:
         yield db
+
 
 
 

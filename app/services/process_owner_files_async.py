@@ -1,301 +1,378 @@
+"""
+High-level async pipeline to extract -> embed -> update DB for all files
+uploaded by an Admin (owner folder under UPLOAD_ROOT).
+
+PHASES
+------
+1. Mark eligible UploadRecord rows "processing".
+2. Create Document rows (processing state).
+3. Run extractors in parallel (PROCESSOR_MAP).
+4. Update UploadRecords to "Processing" (extraction done; embedding next).
+5. Run Pinecone upsert in parallel.
+6. Update UploadRecords & Document rows to "Processed" / "Embedding failed".
+7. Cleanup temp output folders.
+
+REQUIRED STATUS DICT SHAPE (passed to DB updaters)
+---------------------------------------------------
+{
+    "admin_id": <admin UUID>,
+    "file_name": <original filename as uploaded>,
+    "status": <"Processing" | "Processed" | "Extraction failed" | "Embedding failed"...>,
+    "message": <human readable>,
+    "time_taken_to_process": <int seconds>   # optional, safe to omit/None
+}
+"""
+
+import asyncio
 import os
 import time
-import asyncio
 from pathlib import Path
+from typing import Dict, List, Optional
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import OUTPUT_DIRECTORY
 from app.services.extractors import PROCESSOR_MAP
-from app.utils.file_handler import delete_non_empty_dir, get_file_category, remove_old_folder
-from app.utils.file_handler import UPLOAD_ROOT
-from app.services.database_service import make_processing, update_db_statuses, create_document_record, update_document_processing_status
+from app.utils.file_handler import (
+    UPLOAD_ROOT,
+    delete_non_empty_dir,
+    remove_old_folder,
+)
 from app.vector_db.pinecone_upsert import upsert_documents_to_pinecone
+from app.services.database_service import (
+    make_processing,
+    update_db_statuses,
+    update_document_processing_status,
+)
 
-async def process_file(file_path: Path, category: str, user_id: str) -> dict:
+
+
+async def process_file(file_path: Path, category: str, admin_id: str) -> Dict:
     """
-    Process a single file and return status dictionary.
+    Run category-specific extractor. Extractor is expected to create a JSON
+    representation in the global `output/` directory (downstream embedding reads it).
 
-    Args:
-        file_path (Path): Full path to the uploaded file.
-        category (str): File category (e.g., Word, PDF).
-        user_id (str): The user's ID.
-
-    Returns:
-        dict: File processing result metadata.
+    On success -> status="Processing" (extraction complete; embedding next).
+    On failure -> status="Extraction failed".
     """
-    start_time = time.time()
-    file_name = file_path.name
+    start = time.time()
     processor = PROCESSOR_MAP.get(category)
+    file_name = file_path.name
 
     if not processor:
         return {
-            "user_id": user_id,
+            "admin_id": admin_id,
             "file_name": file_name,
             "status": "Extraction failed",
-            "message": f"No processor available for category: {category}",
-            "time_taken_to_process": int(time.time() - start_time)
+            "message": f"No extractor for category {category}.",
+            "time_taken_to_process": int(time.time() - start),
         }
 
     try:
         result = await processor(str(file_path))
-        total_time = int(float(result.get("total_time_taken", "0").split()[0]))
+
+    
+        total_time = None
+        for key in ("total_time_taken", "total_time", "time_taken"):
+            if key in result:
+                try:
+                    total_time = int(float(str(result[key]).split()[0]))
+                except Exception:
+                    pass
+                break
+        if total_time is None:
+            total_time = int(time.time() - start)
 
         return {
-            "user_id": user_id,
+            "admin_id": admin_id,
             "file_name": file_name,
-            "status": "Processing",
-            "message": "Extraction successful. Embedding initiated",
-            "time_taken_to_process": total_time or int(time.time() - start_time)
+            "status": "Processing",  
+            "message": "Extraction successful. Embedding initiated.",
+            "time_taken_to_process": total_time,
         }
 
     except Exception as e:
         return {
-            "user_id": user_id,
+            "admin_id": admin_id,
             "file_name": file_name,
             "status": "Extraction failed",
-            "message": f"Error due to: {str(e)}",
-            "time_taken_to_process": int(time.time() - start_time)
+            "message": f"Error during extraction: {e}",
+            "time_taken_to_process": int(time.time() - start),
         }
 
 
-async def process_owner_files_async(owner: str, user_id: str, db: AsyncSession):
+
+async def process_owner_files_async(owner: str, admin_id: str, db: AsyncSession) -> None:
     """
-    Process all files for a given owner, then batch update their statuses in DB.
-
-    Args:
-        owner (str): Directory name corresponding to the owner.
-        user_id (str): The user's ID.
-        db (AsyncSession): Async database session.
-
-    Returns:
-        dict: Grouped results by file category.
+    Full async processing pipeline for all files in UPLOAD_ROOT/<owner>/... .
+    Runs extractors, then embeddings, and updates UploadRecord + Document rows.
     """
     os.makedirs(OUTPUT_DIRECTORY, exist_ok=True)
+
     owner_dir = UPLOAD_ROOT / owner
     if not owner_dir.exists():
-        raise FileNotFoundError("Owner directory not found")
+        raise FileNotFoundError(f"Owner directory not found: {owner_dir}")
 
-    await make_processing(db, user_id)
-    
-    # Create Document records for all files being processed
-    await create_document_records_for_files(owner, user_id, db)
+    await make_processing(db, admin_id)
 
-    tasks = []
+    await create_document_records_for_files(owner, admin_id, db)
+
+   
+    extract_tasks: List = []
     for category_folder in owner_dir.iterdir():
         if not category_folder.is_dir():
             continue
-
         category = category_folder.name
-        for file_path in category_folder.glob("*"):
-            if file_path.is_file():
-                tasks.append(process_file(file_path, category, user_id))
+        for fp in category_folder.glob("*"):
+            if fp.is_file():
+                extract_tasks.append(process_file(fp, category, admin_id))
 
-    # Wait for all files to be processed concurrently
-    results = await asyncio.gather(*tasks, return_exceptions=False)
+    extract_results: List[Dict] = []
+    if extract_tasks:
+        extract_results = await asyncio.gather(*extract_tasks, return_exceptions=False)
 
-    # Call to update database
-    await update_db_statuses(db, results)
-    await delete_non_empty_dir('output/images')
-    print("\n-------------------extraction end---------------------------\n")
     
+    if extract_results:
+        await update_db_statuses(db, extract_results)
 
+    
+    await delete_non_empty_dir("output/images")
 
-    vector_store=[]
-    folder_path = "output"
-    for filename in os.listdir(folder_path):
-        file_path = os.path.join(folder_path, filename)
-        print(f"\n\nProcessing file: {file_path}\n\n")
-        if os.path.isfile(file_path):
-            #storing in vector db
-            vector_store.append(upsert_documents_to_pinecone(file_path,user_id,owner))
-    print("\n-------------------await start---------------------------\n")
-    results = await asyncio.gather(*vector_store, return_exceptions=False)
-    await update_db_statuses(db, results)
     
-    # Update Document records with processing results
-    await update_document_records_after_processing(results, db)
+    embed_tasks: List = []
+    output_dir = Path("output")
+    if output_dir.exists():
+        for fp in output_dir.iterdir():
+            if fp.is_file():
+                # schedule the upsert coroutine (returns dict)
+                embed_tasks.append(upsert_documents_to_pinecone(str(fp), admin_id, owner))
+
+    embed_results_raw: List[Dict] = []
+    if embed_tasks:
+        embed_results_raw = await asyncio.gather(*embed_tasks, return_exceptions=False)
+
+    # Ensure every embed result has admin_id
+    embed_results: List[Dict] = []
+    for r in embed_results_raw:
+        if isinstance(r, dict):
+            r.setdefault("admin_id", admin_id)
+            embed_results.append(r)
+
     
-    # Clean up old folder
-    print("\n-------------------stored end---------------------------\n")
-    await delete_non_empty_dir('output')
+    final_updates: List[Dict] = []
+    for r in embed_results:
+        raw_status = str(r.get("status", "")).lower()
+        ok = raw_status == "processed"
+        final_updates.append({
+            "admin_id": admin_id,
+            "file_name": r.get("file_name"),
+            "status": "Processed" if ok else "Embedding failed",
+            "message": r.get("message") if r.get("message") else ("File processed successfully." if ok else "Embedding failed."),
+          
+            "time_taken_to_process": r.get("time_taken_to_process", 0),
+        })
+
+    if final_updates:
+        await update_db_statuses(db, final_updates)
+        await update_document_records_after_processing(final_updates, db)
+
+    
+    await delete_non_empty_dir("output")
     await remove_old_folder(owner_dir)
 
-    return results
 
 
-async def create_document_records_for_files(owner: str, user_id: str, db: AsyncSession):
+def process_initiate_response(owner: str, admin_id: str) -> Dict:
+    return {
+        "message": "File processing initiated.",
+        "owner": owner,
+        "admin_id": admin_id,
+        "status": "processing",
+    }
+
+
+
+async def get_admin_file_statuses(admin_id: str, db: AsyncSession) -> Dict:
     """
-    Create Document records for all files being processed.
-    
-    Args:
-        owner (str): Directory name corresponding to the owner.
-        user_id (str): The user's ID.
-        db (AsyncSession): Async database session.
+    Return a structured list of all UploadRecord rows for this admin.
+    Matches the format you requested.
     """
-    from app.models.models import UploadRecord
     from sqlalchemy import select
+    from app.models.models import UploadRecord
+
+    result = await db.execute(
+        select(
+            UploadRecord.id,
+            UploadRecord.file_name,
+            UploadRecord.file_type,
+            UploadRecord.status,
+            UploadRecord.message,
+            UploadRecord.upload_time,
+            UploadRecord.processed_time,
+            UploadRecord.time_taken_to_process,
+            UploadRecord.is_deleted,
+        ).where(
+            UploadRecord.admin_id == admin_id,
+            UploadRecord.is_deleted == False,
+        )
+    )
+    rows = result.all()
+
+    files: List[Dict] = []
+    for row in rows:
+        files.append({
+            "file_id": row.id,
+            "admin_id": admin_id,
+            "file_name": row.file_name,
+            "file_type": row.file_type,
+            "category": row.file_type,  
+            "status": row.status,
+            "message": row.message,
+            "upload_time": row.upload_time,
+            "processed_time": row.processed_time,
+            "time_taken_to_process": row.time_taken_to_process,
+            "is_deleted": row.is_deleted,
+        })
+
+    return {
+        "admin_id": admin_id,
+        "files": files,
+        "message": "No files found." if not files else f"{len(files)} file(s) found.",
+    }
+
+
+
+async def update_document_records_after_processing(results: List[Dict], db: AsyncSession) -> None:
+    """
+    Update each Document row based on embedding success/failure.
+    results: list of dicts created in process_owner_files_async() final_updates.
+    """
     from datetime import datetime
-    
-    try:
-        # Get all upload records for this user that are being processed
-        result = await db.execute(
+    from sqlalchemy import select
+    from app.models.models import UploadRecord, Document
+
+    for r in results:
+        if not isinstance(r, dict):
+            continue
+
+        file_name = r.get("file_name")
+        admin_id = r.get("admin_id")
+        status = str(r.get("status", "")).lower()
+        msg = r.get("message", "")
+
+        if not (file_name and admin_id):
+            continue
+
+       
+        upload_q = await db.execute(
             select(UploadRecord).where(
-                UploadRecord.user_id == user_id,
-                UploadRecord.status.in_(["processing", "Processing"]),
-                UploadRecord.is_deleted == False
+                UploadRecord.admin_id == admin_id,
+                UploadRecord.file_name == file_name,
+                UploadRecord.is_deleted == False,
             )
         )
-        upload_records = result.scalars().all()
+        upload_rec = upload_q.scalar_one_or_none()
+        if not upload_rec:
+            continue
+
         
-        owner_dir = UPLOAD_ROOT / owner
-        
-        for upload_record in upload_records:
-            # Find the actual file path
-            file_found = False
-            for category_folder in owner_dir.iterdir():
-                if not category_folder.is_dir():
-                    continue
-                    
-                for file_path in category_folder.glob("*"):
-                    if file_path.is_file() and file_path.name == upload_record.file_name:
-                        # Create document record
-                        document_id = await create_document_record(
-                            user_id=user_id,
-                            upload_record_id=upload_record.id,
-                            file_path=str(file_path),
-                            file_size=upload_record.file_size,
-                            file_type=upload_record.file_type,
-                            db=db,
-                            processing_status="processing",
-                            processing_started_at=datetime.utcnow(),
-                            embedding_model="text-embedding-3-small",
-                            pinecone_index_name="tdgpt",
-                            total_chunks=0  # Will be updated after processing
-                        )
-                        
-                        if document_id:
-                            print(f"Created document record {document_id} for file {upload_record.file_name}")
-                        else:
-                            print(f"Failed to create document record for file {upload_record.file_name}")
-                        
-                        file_found = True
-                        break
-                
-                if file_found:
-                    break
-                    
-    except Exception as e:
-        print(f"Error creating document records: {e}")
+        doc_q = await db.execute(
+            select(Document).where(
+                Document.upload_record_id == upload_rec.id,
+                Document.is_deleted == False,
+            )
+        )
+        doc = doc_q.scalar_one_or_none()
+        if not doc:
+            continue
+
+        if status == "processed":
+           
+            await update_document_processing_status(
+                db=db,
+                document_id=doc.id,
+                processing_status="completed",
+                processing_completed_at=datetime.utcnow(),
+                embedding_model="BAAI/bge-small-en-v1.5",
+                pinecone_index_name="llamaintegration",
+                total_chunks=_estimate_chunks(doc.file_size),
+            )
+        elif status in ("processing",):
+           
+            await update_document_processing_status(
+                db=db,
+                document_id=doc.id,
+                processing_status="processing",
+            )
+        else:
+            
+            await update_document_processing_status(
+                db=db,
+                document_id=doc.id,
+                processing_status="failed",
+                processing_error=msg or "Unknown embedding error.",
+                processing_completed_at=datetime.utcnow(),
+            )
 
 
-async def update_document_records_after_processing(results: list, db: AsyncSession):
+
+async def create_document_records_for_files(owner: str, admin_id: str, db: AsyncSession) -> None:
     """
-    Update Document records with processing results.
-    
-    Args:
-        results (list): List of processing results.
-        db (AsyncSession): Async database session.
+    For each UploadRecord(admin_id=..., status in ['processing','Processing']) create
+    a Document row pointing to the physical uploaded file path under
+    UPLOAD_ROOT/<owner>/<category>/<file>.
     """
-    from app.models.models import UploadRecord, Document
-    from sqlalchemy import select
     from datetime import datetime
+    from sqlalchemy import select
+    from app.models.models import UploadRecord
+    from app.services.database_service import create_document_record
+
+    owner_dir = UPLOAD_ROOT / owner
+    disk_files: Dict[str, Path] = {}
+    if owner_dir.exists():
+        for category_folder in owner_dir.iterdir():
+            if not category_folder.is_dir():
+                continue
+            for fp in category_folder.glob("*"):
+                if fp.is_file():
+                    disk_files[fp.name] = fp
+
     
-    for result in results:
-        if not isinstance(result, dict):
+    result = await db.execute(
+        select(UploadRecord).where(
+            UploadRecord.admin_id == admin_id,
+            UploadRecord.status.in_(["processing", "Processing"]),
+            UploadRecord.is_deleted == False,
+        )
+    )
+    upload_records = result.scalars().all()
+
+    for rec in upload_records:
+        fp = disk_files.get(rec.file_name)
+        if not fp:
+           
             continue
-            
-        file_name = result.get("file_name")
-        status = result.get("status")
-        user_id = result.get("user_id")
-        
-        if not all([file_name, status, user_id]):
-            continue
-            
-        try:
-            # Get upload record
-            upload_result = await db.execute(
-                select(UploadRecord).where(
-                    UploadRecord.user_id == user_id,
-                    UploadRecord.file_name == file_name,
-                    UploadRecord.is_deleted == False
-                )
-            )
-            upload_record = upload_result.scalar_one_or_none()
-            
-            if not upload_record:
-                continue
-                
-            # Get document record
-            doc_result = await db.execute(
-                select(Document).where(
-                    Document.upload_record_id == upload_record.id,
-                    Document.is_deleted == False
-                )
-            )
-            document = doc_result.scalar_one_or_none()
-            
-            if not document:
-                continue
-                
-            # Update document status based on processing result
-            if status in ["Processed", "Processing"]:
-                processing_status = "completed" if status == "Processed" else "processing"
-                processing_completed_at = datetime.utcnow() if status == "Processed" else None
-                
-                # Set embedding details if successful
-                embedding_model = "BAAI/bge-small-en-v1.5" if status == "Processed" else None
-                pinecone_index_name = "llamaintegration" if status == "Processed" else None  # cleaned name
-                
-                # Estimate chunk count based on file size (rough approximation)
-                # Based on observed data: ~50,000-120,000 bytes per chunk for PDF files
-                # Using average of 85,000 bytes per chunk
-                estimated_chunks = None
-                if status == "Processed" and document.file_size:
-                    estimated_chunks = max(1, int(document.file_size / 85000))
-                
-                await update_document_processing_status(
-                    db=db,
-                    document_id=document.id,
-                    processing_status=processing_status,
-                    processing_completed_at=processing_completed_at,
-                    embedding_model=embedding_model,
-                    pinecone_index_name=pinecone_index_name,
-                    total_chunks=estimated_chunks
-                )
-                
-                print(f"Updated document {document.id} status to {processing_status}")
-                
-            elif "failed" in status.lower() or "error" in status.lower():
-                await update_document_processing_status(
-                    db=db,
-                    document_id=document.id,
-                    processing_status="failed",
-                    processing_error=result.get("message", "Unknown error"),
-                    processing_completed_at=datetime.utcnow()
-                )
-                
-                print(f"Updated document {document.id} status to failed")
-                
-        except Exception as e:
-            print(f"Error updating document record for {file_name}: {e}")
+
+        await create_document_record(
+            admin_id=admin_id,
+            upload_record_id=rec.id,
+            file_path=str(fp),
+            file_size=rec.file_size,
+            file_type=rec.file_type,
+            db=db,
+            processing_status="processing",
+            processing_started_at=datetime.utcnow(),
+            embedding_model="text-embedding-3-small",
+            pinecone_index_name="tdgpt",
+            total_chunks=0,
+        )
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+def _estimate_chunks(file_size: Optional[int]) -> Optional[int]:
+    if not file_size:
+        return None
+    try:
+        return max(1, int(file_size / 85_000))
+    except Exception:
+        return None

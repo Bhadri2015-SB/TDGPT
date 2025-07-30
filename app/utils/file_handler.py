@@ -77,10 +77,10 @@ async def delete_non_empty_dir(path):
     if os.path.exists(path):
         for root, dirs, files in os.walk(path, topdown=False):
             for name in files:
-                os.remove(os.path.join(root, name))  # Delete files
+                os.remove(os.path.join(root, name)) 
             for name in dirs:
-                os.rmdir(os.path.join(root, name))  # Delete empty subdirectories
-        os.rmdir(path)  # Finally delete the root directory
+                os.rmdir(os.path.join(root, name))  
+        os.rmdir(path)  
 
         
 async def remove_old_folder(owner_dir: Path) -> None:
@@ -98,13 +98,13 @@ async def remove_old_folder(owner_dir: Path) -> None:
             try:
                 category_folder.rmdir()
             except Exception:
-                pass  # Silently ignore cleanup issues
+                pass  
 
     if not any(owner_dir.iterdir()):
         try:
             owner_dir.rmdir()
         except Exception:
-            pass  # Silently ignore cleanup issues
+            pass  
 
 
 async def get_file_size(file: UploadFile) -> int:
@@ -117,8 +117,8 @@ async def get_file_size(file: UploadFile) -> int:
     Returns:
         int: Size in bytes.
     """
-    file.file.seek(0, 2)  # Seek to end
+    file.file.seek(0, 2)  
     size = file.file.tell()
-    file.file.seek(0)     # Reset to start
+    file.file.seek(0)     
     return size
 

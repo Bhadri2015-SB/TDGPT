@@ -5,16 +5,14 @@ from email.mime.multipart import MIMEMultipart
 
 from app.core import config
 
-# OTP generation function
 async def generate_otp(length=6):
     return ''.join([str(random.randint(0, 9)) for _ in range(length)])
 
-# Email sending function
 async def send_password_reset_email(receiver_email, user_name, otp):
-    sender_email = config.SENDER_EMAIL  # Use the sender email from config
-    sender_password = config.EMAIL_PASSWORD  # Use app-specific password if needed
+    sender_email = config.SENDER_EMAIL  
+    sender_password = config.EMAIL_PASSWORD  
 
-    # otp = generate_otp()
+  
 
     subject = "Reset Your Password – OTP Inside"
     body = f"""
@@ -34,7 +32,7 @@ async def send_password_reset_email(receiver_email, user_name, otp):
     Your Company Name
     """
 
-    # Compose the email
+  
     msg = MIMEMultipart()
     msg["From"] = sender_email
     msg["To"] = receiver_email
@@ -43,7 +41,7 @@ async def send_password_reset_email(receiver_email, user_name, otp):
     msg.attach(MIMEText(body, "plain"))
 
     try:
-        # Connect to the SMTP server
+      
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
             server.login(sender_email, sender_password)
             server.send_message(msg)

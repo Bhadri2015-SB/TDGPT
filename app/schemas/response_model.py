@@ -5,7 +5,7 @@ from typing import List, Union, Any
 class RepoInput(BaseModel):
     repo_url: str
 
-#not used
+
 class PageData(BaseModel):
     text: str
     tables: Union[List[Any], str]

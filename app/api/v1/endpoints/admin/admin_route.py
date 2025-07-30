@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse, HTMLResponse
+from datetime import datetime
 from fastapi import status 
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -7,29 +8,29 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.security import create_access_token
 from app.db.session import get_db
 from app.schemas.response_model import ForgotPasswordRequest, LoginRequest, RegisterRequest, ResetPasswordRequest, VerifyOTPRequest
-from app.services.database_service import authenticate_user, create_user, get_user_by_email, update_user_otp, update_user_password, verify_user_otp
+from app.services.admin_service import create_admin, authenticate_admin, get_admin_by_email
 from app.services.mailing_service import generate_otp, send_password_reset_email
 
 router = APIRouter()
 
 @router.post("/register")
-async def register_user(
-    name: str = Form(..., description="Enter your name"),
+async def register_admin(
+    admin_name: str = Form(..., description="Enter your admin name"),
     email: str = Form(..., description="Enter your email"),
     password: str = Form(..., description="Enter your password"),
     db: AsyncSession = Depends(get_db)
 ):
-    user = await create_user(
+    admin = await create_admin(
         db,
-        username=name,
+        admin_name=admin_name,
         email=email,
         password=password
     )
     return {
-        "message": "User registered successfully.",
-        "username": user.username,
-        "email": user.email,
-        "created_at": user.created_at
+        "message": "Admin registered successfully.",
+        "admin_name": admin.admin_name,
+        "email": admin.email,
+        "created_at": admin.created_at
     }
 
 @router.get("/login")
@@ -46,14 +47,14 @@ async def login(
     password: str = Form(..., description="Enter your password"),
     db: AsyncSession = Depends(get_db)
 ):
-    user = await authenticate_user(db, email, password)
-    if not user:
+    admin = await authenticate_admin(db, email, password)
+    if not admin:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password"
         )
 
-    access_token = create_access_token(data={"sub": str(user.id)})
+    access_token = create_access_token(data={"sub": str(admin.id)})
 
     response = JSONResponse(
         content={
@@ -65,9 +66,9 @@ async def login(
         key="access_token",
         value=access_token,
         httponly=True,
-        secure=False,  # Set to True in production with HTTPS
+        secure=False,  
         samesite="lax",
-        max_age=1800  # 30 minutes
+        max_age=1800  
     )
     return response
 
@@ -83,23 +84,21 @@ async def forgot_password_page(
     email: str = Form(..., description="Enter your email"),
     db: AsyncSession = Depends(get_db)
 ):
-    user = await get_user_by_email(db, email)
-    if not user:
+    from app.services.mailing_service import generate_otp, send_password_reset_email
+    admin = await get_admin_by_email(db, email)
+    if not admin:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
+            detail="Admin not found"
         )
-    
-    otp= await generate_otp()
-
-    status= await send_password_reset_email(email, user.username, otp)
+    otp = await generate_otp()
+    status = await send_password_reset_email(email, admin.admin_name, otp)
     if status:
-        await update_user_otp(
-            db=db,
-            user_id=user.id,
-            otp=otp
-        )
-        # Save the OTP to the database (not shown here, but you would typically commit this change)
+        admin.reset_otp = otp
+        admin.allow_password_reset = True
+        admin.updated_at = datetime.utcnow()
+        await db.commit()
+        await db.refresh(admin)
         return JSONResponse(
             content={"message": "OTP sent to your email."},
             status_code=200
@@ -117,17 +116,16 @@ async def otp_verify(
     otp: str = Form(..., description="Enter OTP from email"),
     db: AsyncSession = Depends(get_db)
 ):
-    verify = await verify_user_otp(
-        db=db,
-        email=email,
-        otp=otp)
-    
-    if not verify:
+    admin = await get_admin_by_email(db, email)
+    if not admin or admin.reset_otp != otp:
         raise HTTPException(
             status_code=400,
             detail="Invalid OTP"
         )
-    
+    admin.allow_password_reset = True
+    admin.updated_at = datetime.utcnow()
+    await db.commit()
+    await db.refresh(admin)
     return JSONResponse(
         content={"message": "OTP verification successfully."},
         status_code=200
@@ -140,12 +138,19 @@ async def reset_password(
     new_password: str = Form(..., description="Enter new password"),
     db: AsyncSession = Depends(get_db)
 ):
-    update_password = await update_user_password(db=db, email=email, new_password=new_password)
-    if not update_password:
+    admin = await get_admin_by_email(db, email)
+    if not admin or not admin.allow_password_reset:
         raise HTTPException(
             status_code=400,
-            detail="Failed to reset password"
+            detail="OTP not verified or admin not found"
         )
+    from app.core.security import hash_password
+    admin.password_hash = await hash_password(new_password)
+    admin.allow_password_reset = False
+    admin.reset_otp = None
+    admin.updated_at = datetime.utcnow()
+    await db.commit()
+    await db.refresh(admin)
     return JSONResponse(
         content={"message": "Password reset successfully."},
         status_code=200

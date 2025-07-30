@@ -1,27 +1,39 @@
 services:
   backend:
-    image: bhadri2919/trocare-backend:v1
     build: .
     container_name: rag_backend
     ports:
-      - "8000:8000"
-    env_file:
-      - .env
-    restart: always
+      - "8001:8001"
+    environment:
+      DB_URL: mysql+asyncmy://root:${MYSQL_ROOT_PASSWORD}@mysql_db:${DB_PORT}/${MYSQL_DATABASE}
     depends_on:
-      - mysql
+      mysql_db:
+        condition: service_healthy
+    networks:
+      - rag_network
 
-  mysql:
+  mysql_db:
     image: mysql:8
     container_name: mysql_db
-    environment:
-      MYSQL_ROOT_PASSWORD: Root
-      MYSQL_DATABASE: tdgpt
+    restart: always
     ports:
-      - "3307:3306"
+      - "3307:3306"   # Host:Container
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
     volumes:
       - mysql_data:/var/lib/mysql
-    restart: always
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - rag_network
+
+networks:
+  rag_network:
+    driver: bridge
 
 volumes:
   mysql_data:
