@@ -1,6 +1,7 @@
 
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from app.db.session import Base, engine
 
 
@@ -35,6 +36,13 @@ app = FastAPI(
     ],
 )
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 
@@ -62,7 +70,7 @@ async def startup_event():
     
     pinecone_api_key = config.PINECONE_API_KEY
     pc = Pinecone(api_key=pinecone_api_key)
-    index_name = "maindocs"  
+    index_name = "maindocs"   
 
     if index_name not in pc.list_indexes().names():
         pc.create_index(
