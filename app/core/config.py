@@ -46,10 +46,10 @@ MYSQL_PASSWORD = os.getenv("MYSQL_ROOT_PASSWORD", "Root")
 MYSQL_DATABASE = os.getenv("MYSQL_DATABASE", "tdgpt")
 
 
-if is_running_in_docker():
-    DB_URL = os.getenv("URL_DATABASE")
-else:
-    DB_URL = f"mysql+asyncmy://{MYSQL_USER}:{MYSQL_PASSWORD}@127.0.0.1:3307/{MYSQL_DATABASE}"
+# if is_running_in_docker():
+DB_URL = os.getenv("URL_DATABASE")
+# else:
+#     DB_URL = f"mysql+asyncmy://{MYSQL_USER}:{MYSQL_PASSWORD}@127.0.0.1:3307/{MYSQL_DATABASE}"
 
 
 print(f"[DEBUG] Using DB URL: {DB_URL}")
