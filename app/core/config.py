@@ -46,10 +46,11 @@ MYSQL_PASSWORD = os.getenv("MYSQL_ROOT_PASSWORD", "Root")
 MYSQL_DATABASE = os.getenv("MYSQL_DATABASE", "tdgpt")
 
 
-if is_running_in_docker():
-    DB_URL = os.getenv("URL_DATABASE")
-else:
-    DB_URL = f"mysql+asyncmy://{MYSQL_USER}:{MYSQL_PASSWORD}@127.0.0.1:3307/{MYSQL_DATABASE}"
+
+DB_URL = os.getenv("URL_DATABASE")
+if not DB_URL:
+   
+    DB_URL = f"mysql+asyncmy://{MYSQL_USER}:{MYSQL_PASSWORD}@mysql_db:3306/{MYSQL_DATABASE}"
 
 
 print(f"[DEBUG] Using DB URL: {DB_URL}")
@@ -69,7 +70,6 @@ ACCESS_TOKEN_EXPIRE_MINUTES = os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES")
 ALGORITHM = os.getenv("ALGORITHM")
 
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-URL_DATABASE = os.getenv("URL_DATABASE")
 
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
 SENDER_EMAIL = os.getenv("SENDER_EMAIL")
