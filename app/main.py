@@ -23,6 +23,11 @@ import dotenv
 from pinecone import Pinecone, ServerlessSpec
 from app.core import config
 
+from fastapi.staticfiles import StaticFiles
+
+from app.vector_db import upsert_image
+
+
 dotenv.load_dotenv()
 
 
@@ -44,8 +49,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-
+# Mount static file directories for serving images
+app.mount("/output/images", StaticFiles(directory=str(config.IMAGE_OUTPUT_DIR)), name="output_images")
 
 app.include_router(admin_file_routes.router, prefix="/admin", tags=["admin"])
 app.include_router(admin_auth.router, prefix="/admin/auth", tags=["admin"])

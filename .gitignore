@@ -2,7 +2,7 @@
 env
 .env
 __pycache__
-outputs
+output
 uploads
 .pytest_cache
 /tests/__pycache__

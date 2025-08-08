@@ -31,14 +31,15 @@ from typing import Dict, List, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import OUTPUT_DIRECTORY
+from app.core.config import OUTPUT_DIRECTORY,IMAGE_OUTPUT_DIR
 from app.services.extractors import PROCESSOR_MAP
 from app.utils.file_handler import (
     UPLOAD_ROOT,
     delete_non_empty_dir,
     remove_old_folder,
 )
-from app.vector_db.pinecone_upsert import upsert_documents_to_pinecone
+from app.vector_db.pinecone_upsert import upsert_documents_to_pinecone, _clean_name
+from app.vector_db.upsert_image import upsert_image_folder
 from app.services.database_service import (
     make_processing,
     update_db_statuses,
@@ -135,23 +136,29 @@ async def process_owner_files_async(owner: str, admin_id: str, db: AsyncSession)
     if extract_results:
         await update_db_statuses(db, extract_results)
 
+   
+    images_dir = IMAGE_OUTPUT_DIR 
     
-    await delete_non_empty_dir("output/images")
+   
+    sanitized_owner = _clean_name(owner)
 
-    
+    image_upsert = upsert_image_folder(images_dir, sanitized_owner)
     embed_tasks: List = []
     output_dir = Path("output")
     if output_dir.exists():
         for fp in output_dir.iterdir():
             if fp.is_file():
-                # schedule the upsert coroutine (returns dict)
+                
                 embed_tasks.append(upsert_documents_to_pinecone(str(fp), admin_id, owner))
+    
+    
+    embed_tasks.append(image_upsert)
 
     embed_results_raw: List[Dict] = []
     if embed_tasks:
         embed_results_raw = await asyncio.gather(*embed_tasks, return_exceptions=False)
 
-    # Ensure every embed result has admin_id
+   
     embed_results: List[Dict] = []
     for r in embed_results_raw:
         if isinstance(r, dict):
@@ -176,8 +183,7 @@ async def process_owner_files_async(owner: str, admin_id: str, db: AsyncSession)
         await update_db_statuses(db, final_updates)
         await update_document_records_after_processing(final_updates, db)
 
-    
-    await delete_non_empty_dir("output")
+   
     await remove_old_folder(owner_dir)
 
 
@@ -269,9 +275,9 @@ async def update_document_records_after_processing(results: List[Dict], db: Asyn
                 UploadRecord.admin_id == admin_id,
                 UploadRecord.file_name == file_name,
                 UploadRecord.is_deleted == False,
-            )
+            ).order_by(UploadRecord.upload_time.desc())
         )
-        upload_rec = upload_q.scalar_one_or_none()
+        upload_rec = upload_q.scalars().first()  # Get the most recent record
         if not upload_rec:
             continue
 

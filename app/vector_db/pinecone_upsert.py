@@ -20,14 +20,18 @@ from llama_index.retrievers import VectorIndexRetriever
 from llama_index.vector_stores import PineconeVectorStore
 
 from app.core import config
-from app.utils.file_handler import get_file_category  # async
+from app.utils.file_handler import get_file_category  
 
-# If you call retrieval_all_admins() you'll need an AsyncSession from caller.
+
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.models.models import Admin
 
+
+
 dotenv.load_dotenv()
+
+
 
 
 
@@ -238,7 +242,7 @@ async def _detect_category_from_extracted_file(path: Path) -> str:
         if ft_up in {"CSV"}:
             return "EXCEL"
 
-    # try name like "file.pdf.json"
+   
     stem_parts = path.name.split(".")
     if len(stem_parts) >= 3:
         ext_guess = stem_parts[-2].lower()
@@ -357,11 +361,11 @@ async def _llm_call(retrieved_text: str, query: str) -> Any:
     }
 
     system_prompt = (
-        "You are an expert domain assistant that strictly adheres to the provided context.\n"
-        "- Use ONLY the retrieved context.\n"
-        "- If answer not in context, say: 'The answer is not available in the provided context.'\n"
-        "- Preserve technical formatting.\n"
-        "- Provide clear, structured responses.\n"
+        "You are an expert domain assistant that provides helpful answers based on the available context.\n"
+        "- Use the retrieved context as your primary source of information.\n"
+        "- If the context contains relevant information (even if partially unclear), provide the best answer you can.\n"
+        "- Only say 'The answer is not available in the provided context.' if the context is completely unrelated to the query.\n"
+        "- Preserve technical formatting and provide clear, structured responses.\n"
     )
 
     payload = {
@@ -432,13 +436,153 @@ async def retrival(
         if not nodes:
             return "The answer is not available in the provided context."
 
-        retrieved_text = "\n\n".join([n.node.text for n in nodes])
-        return await _llm_call(retrieved_text, query)
+    #     retrieved_text = "\n\n".join([n.node.text for n in nodes])
+    #     return await _llm_call(retrieved_text, query)
+
+    # except Exception as e:
+    #     print(f"[Retrieval-ERROR] {e}")
+    #     return {"error": str(e)}
+        text_nodes = [n for n in nodes if n.node.metadata.get("type") != "image"]
+        retrieved_text = "\n\n".join([n.node.text for n in text_nodes if hasattr(n.node, 'text')])
+        
+       
+        relevant_files = set()
+        file_scores = {}
+        for n in text_nodes:
+            fname = n.node.metadata.get("file_name", "")
+            if fname:
+                relevant_files.add(fname)
+                score = getattr(n, "score", 0)
+                if fname not in file_scores or score > file_scores[fname]:
+                    file_scores[fname] = score
+        
+       
+        primary_file = None
+        secondary_files = []
+        if file_scores:
+            
+            sorted_files = sorted(file_scores.items(), key=lambda x: x[1], reverse=True)
+            
+           
+          
+            
+            primary_file = sorted_files[0][0]
+            primary_score = sorted_files[0][1]
+            
+            
+            for fname, score in sorted_files[1:]:
+                if abs(primary_score - score) < 0.015:  
+                    secondary_files.append(fname)
+
+      
+        images_from_text_search = []
+        for n in nodes:
+            md = n.node.metadata
+            if md.get("type") == "image":
+                img_source_file = md.get("source_file") or ""
+       
+                base_file = img_source_file.split("_page")[0] if "_page" in img_source_file else img_source_file.split(".")[0]
+                
+               
+                is_from_primary = primary_file and (base_file in primary_file or primary_file in base_file)
+                is_from_secondary = any(base_file in sf or sf in base_file for sf in secondary_files)
+                
+                if is_from_primary or is_from_secondary:
+                    images_from_text_search.append({
+                        "filename": img_source_file,
+                        "url": md.get("url"),
+                        "score": getattr(n, "score", None),
+                        "priority": "primary" if is_from_primary else "secondary"
+                    })
+
+      
+        try:
+            from app.vector_db.upsert_image import search_images
+           
+            clip_images = await search_images(query, index_name_clean, top_k=5)
+            
+            
+            filtered_clip_images = []
+            for img in clip_images:
+                img_source_file = img.get("source_file") or ""
+                if not img_source_file:
+                    continue
+                    
+                base_file = img_source_file.split("_page")[0] if "_page" in img_source_file else img_source_file.split(".")[0]
+                
+                
+                is_from_primary = primary_file and (base_file in primary_file or primary_file in base_file)
+                is_from_secondary = any(base_file in sf or sf in base_file for sf in secondary_files)
+                
+                if is_from_primary or is_from_secondary:
+                    filtered_clip_images.append({
+                        "filename": img_source_file,
+                        "url": img.get("url"),
+                        "score": img.get("score"),
+                        "priority": "primary" if is_from_primary else "secondary"
+                    })
+            
+           
+            all_images = filtered_clip_images + images_from_text_search
+            
+            
+            all_images.sort(key=lambda x: (x.get("priority") != "primary", -x.get("score", 0)))
+            
+           
+            seen_files = set()
+            images = []
+            primary_images = []
+            secondary_images = []
+            
+         
+            for img in all_images:
+                filename = img.get("filename") or ""
+                if filename and filename not in seen_files:
+                    img_data = {
+                        "filename": filename,
+                        "url": img.get("url"),
+                        "score": img.get("score")
+                    }
+                    if img.get("priority") == "primary":
+                        primary_images.append(img_data)
+                    else:
+                        secondary_images.append(img_data)
+                    seen_files.add(filename)
+            
+            
+            if secondary_files and len(secondary_images) > 0:
+               
+                images.extend(primary_images[:2])
+                images.extend(secondary_images[:1])
+            else:
+                
+                images.extend(primary_images[:3])
+            
+           
+            images = images[:3]
+        except Exception as e:
+            print(f"[CLIP-Search-ERROR] {e}")
+            import traceback
+            traceback.print_exc()
+            images = images_from_text_search[:3] 
+
+       
+        if not retrieved_text.strip():
+            if images:
+                llm_response = "I found some relevant images for your query, but no text content was available."
+            else:
+                return "The answer is not available in the provided context."
+        else:
+            llm_response = await _llm_call(retrieved_text, query)
+
+        return {
+                "answer": llm_response,
+                "images": images,  
+            }
 
     except Exception as e:
         print(f"[Retrieval-ERROR] {e}")
         return {"error": str(e)}
-
 
 
 
@@ -469,6 +613,7 @@ async def _retrieval_single_index(
     """
     Run similarity search in a *single* Pinecone index and return scored hits.
     Each hit: {index_name, text, score, metadata}.
+    Now includes CLIP-based image search from the unified index.
     """
     pc = Pinecone(api_key=config.PINECONE_API_KEY)
     pinecone_index = pc.Index(index_name_clean)
@@ -481,6 +626,7 @@ async def _retrieval_single_index(
 
     nodes = await asyncio.to_thread(retriever.retrieve, query)
     out: List[Dict[str, Any]] = []
+ 
     for n in nodes:
         out.append(
             {
@@ -490,6 +636,30 @@ async def _retrieval_single_index(
                 "metadata": n.node.metadata or {},
             }
         )
+    
+   
+    try:
+        from app.vector_db.upsert_image import search_images
+        clip_images = await search_images(query, index_name_clean, top_k=3)
+        
+       
+        for img in clip_images:
+            out.append(
+                {
+                    "index_name": index_name_clean,
+                    "text": "", 
+                    "score": img.get("score"),
+                    "metadata": {
+                        "type": "image",
+                        "source_file": img.get("source_file"),
+                        "url": img.get("url"),
+                        "filename": img.get("filename"),
+                    },
+                }
+            )
+    except Exception as e:
+        print(f"[CLIP-Search-ERROR in _retrieval_single_index] {e}")
+    
     return out
 
 
@@ -531,16 +701,93 @@ async def retrieval_all_admins(
 
    
     context_lines = []
+    all_images = []  
+    relevant_files = set()  
+    
+   
+    relevant_files = set()  
+    file_scores = {}  
+
     for h in top_hits:
         src_index = h["index_name"]
         meta = h.get("metadata", {})
         fname = meta.get("file_name") or meta.get("heading") or "unknown_source"
         snippet = (h["text"] or "").strip()
-        if snippet:
+        
+        if snippet and meta.get("type") != "image":  
             context_lines.append(f"[{src_index} :: {fname}]\n{snippet}")
+            relevant_files.add(fname)  
+            
+           
+            score = h.get("score", 0)
+            if fname not in file_scores or score > file_scores[fname]:
+                file_scores[fname] = score
+    
+    
+    primary_file = None
+    secondary_files = []
+    if file_scores:
+        sorted_files = sorted(file_scores.items(), key=lambda x: x[1], reverse=True)
+        
+        primary_file = sorted_files[0][0]
+        primary_score = sorted_files[0][1]
+        
+        
+        for fname, score in sorted_files[1:]:
+            if abs(primary_score - score) < 0.015: 
+                secondary_files.append(fname)
+    
+    
+    primary_images = []
+    secondary_images = []
+    
+    for h in top_hits:
+        meta = h.get("metadata", {})
+        fname = meta.get("file_name") or meta.get("heading") or "unknown_source"
+        
+        if meta.get("type") == "image":
+            img_source_file = meta.get("source_file", "")
+          
+            base_file = img_source_file.split("_page")[0] if "_page" in img_source_file else img_source_file.split(".")[0]
+            
+            img_data = {
+                "filename": meta.get("filename") or meta.get("source_file", "unknown_image"),
+                "url": meta.get("url"),
+                "score": h.get("score")
+            }
+            
+           
+            if primary_file and (base_file in primary_file or primary_file in base_file):
+                primary_images.append(img_data)
+            elif any(base_file in sf or sf in base_file for sf in secondary_files):
+                secondary_images.append(img_data)
+    
+   
+    if secondary_files and len(secondary_images) > 0:
+        
+        all_images.extend(primary_images[:2])  
+        all_images.extend(secondary_images[:1])  
+    else:
+        
+        all_images.extend(primary_images[:3])
+    
+   
+    all_images = all_images[:3]
+
 
     if not context_lines:
+        if all_images:
+           
+            return {
+                "answer": "Here are the related images from your documents:",
+                "images": all_images
+            }
         return "The answer is not available in the provided context."
 
     context_text = "\n\n---\n\n".join(context_lines)
-    return await _llm_call(context_text, query)
+    llm_response = await _llm_call(context_text, query)
+    
+    return {
+        "answer": llm_response,
+        "images": all_images
+    }

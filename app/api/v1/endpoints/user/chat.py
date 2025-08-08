@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException, Form, Depends
 from pydantic import BaseModel
+from typing import List, Dict, Any
 
 from app.core.security import get_current_user
 from app.models.models import User
@@ -15,6 +16,7 @@ router = APIRouter(prefix="/chat", tags=["user"])
 
 class ChatAskResponse(BaseModel):
     answer: str
+    images: List[Dict[str, Any]] = []  # Add images field
     username: str
     conversation_id: int | None
     context_used: bool

@@ -98,30 +98,35 @@ async def process_chat_for_user(
             answer_or_error = await retrieval_all_admins(query, db)
         else:
             
-            ix = index_name or getattr(config, "MAIN_PINECONE_INDEX", "maindocs")
+            ix = index_name or getattr(config, "MAIN_PINECONE_INDEX", "ss")  
             answer_or_error = await retrival(query, index_name=ix)
+            
+            
 
         
         context_used = True
         answer: str
+        images: List[Dict] = []
 
-        if isinstance(answer_or_error, dict) and "error" in answer_or_error:
-            
-            context_used = False
-            answer = (
-                f"Sorry {user.username}, I couldn't access the document knowledge base "
-                f"({answer_or_error['error']}). Please try again later."
-            )
+        if isinstance(answer_or_error, dict):
+            if "error" in answer_or_error:
+                context_used = False
+                answer = (
+                    f"Sorry {user.username}, I couldn't access the document knowledge base "
+                    f"({answer_or_error['error']}). Please try again later."
+                )
+            else:
+               
+                answer = str(answer_or_error.get("answer", "")).strip()
+                images = answer_or_error.get("images", [])
         else:
             answer = str(answer_or_error or "").strip()
             
-            if not answer or answer == "The answer is not available in the provided context.":
-                context_used = False
-                answer = "The answer is not available in the provided context."
-
-            else:
-                
-                answer = f"Hi {user.username}, {answer}"
+        if not answer or answer == "The answer is not available in the provided context.":
+            context_used = False
+            answer = "The answer is not available in the provided context."
+        else:
+            answer = f"Hi {user.username}, {answer}"
 
         elapsed_ms = _ms_since(start)
 
@@ -141,6 +146,7 @@ async def process_chat_for_user(
 
         return {
             "answer": answer,
+            "images": images, 
             "username": user.username,
             "conversation_id": convo.id,
             "context_used": context_used,
