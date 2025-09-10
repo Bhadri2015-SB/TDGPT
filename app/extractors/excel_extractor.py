@@ -1,10 +1,21 @@
 import json
 import os
-from typing import List
+from typing import List, Optional
 import aiofiles
 import pandas as pd
 
 from app.utils.file_handler import change_to_processed
+
+
+try:
+    import fitz  
+except Exception:
+    fitz = None  
+
+try:
+    import win32com.client  
+except Exception:
+    win32com = None  
 
 
 def _create_table_html(rows: List[List[str]]) -> str:
@@ -162,6 +173,49 @@ async def extract_excel_content(file_path, *_):
             await f.write(json.dumps(result, indent=2, ensure_ascii=False))
     except Exception as e:
         raise IOError(f"Failed to write JSON output file: {e}")
+
+   
+    try:
+        if win32com is not None and fitz is not None and os.name == 'nt':
+           
+            img_root = os.path.join("output", "images")
+            os.makedirs(img_root, exist_ok=True)
+
+           
+            pdf_dir = os.path.join("output", "tmp_pdf")
+            os.makedirs(pdf_dir, exist_ok=True)
+            pdf_path = os.path.join(pdf_dir, f"{base}.pdf")
+
+            try:
+                excel = win32com.client.Dispatch('Excel.Application')
+                excel.Visible = False
+                wb = excel.Workbooks.Open(os.path.abspath(file_path))
+             
+                wb.ExportAsFixedFormat(0, os.path.abspath(pdf_path))
+                wb.Close(SaveChanges=False)
+                excel.Quit()
+            except Exception:
+              
+                pdf_path = None  
+
+            
+            if pdf_path and os.path.exists(pdf_path):
+                try:
+                    with fitz.open(pdf_path) as pdf_doc: 
+                        for i, page in enumerate(pdf_doc, start=1):
+                            try:
+                                pix = page.get_pixmap(dpi=150)
+                                img_name = f"page_{i}.jpg"
+                                img_path = os.path.join(img_root, img_name)
+                                pix.save(img_path)
+                            except Exception:
+                               
+                                continue
+                except Exception:
+                    pass
+    except Exception:
+        
+        pass
 
     await change_to_processed(str(file_path), "Excel" if ext in [".xlsx", ".xls"] else "CSV")
     return result

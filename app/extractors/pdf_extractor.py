@@ -264,7 +264,7 @@ async def extract_pdf_content(file_path):
     start_time = time.time()
     filename = os.path.splitext(os.path.basename(file_path))[0]
 
-    # Configure Tesseract on Windows if available (best-effort)
+    
     try:
         if os.name == 'nt':
             for p in [
@@ -290,7 +290,7 @@ async def extract_pdf_content(file_path):
     for i, (fz_page, pl_page) in enumerate(zip(pdf, plumber_pdf.pages), start=1):
         page_text = (fz_page.get_text("text") or "").strip()
 
-        # Tables (list of rows) matching Word extractor
+        
         tables_rows: List[List[List[str]]] = []
         try:
             tables_raw = pl_page.extract_tables() or []
@@ -300,7 +300,7 @@ async def extract_pdf_content(file_path):
         except Exception:
             pass
 
-        # Text items and image blocks from rawdict for positions
+        
         page_text_items: List[dict] = []
         image_blocks: List[dict] = []
         try:
@@ -402,7 +402,6 @@ async def extract_pdf_content(file_path):
         except Exception:
             pass
 
-        # Compute simple anchors for each image relative to text blocks
         try:
             def cy(b):
                 return float(b.get("y", 0)) + float(b.get("h", 0)) / 2.0
@@ -430,7 +429,7 @@ async def extract_pdf_content(file_path):
         except Exception:
             pass
 
-        # Save full page screenshot for consistency
+      
         try:
             pix = fz_page.get_pixmap(dpi=150)
             img_name = f"page_{i}.jpg"
@@ -452,7 +451,6 @@ async def extract_pdf_content(file_path):
 
     pages = create_comprehensive_pages_structure(pages_collected, filename)
 
-    # Final result matches Word extractor: only { "pages": [...] }
     result = {"pages": pages}
 
     try:
