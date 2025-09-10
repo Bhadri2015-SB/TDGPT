@@ -51,7 +51,7 @@ async def summarize_text(text, groq_client, model):
 async def groq_chat_completion(
     messages: List[Dict[str, str]], 
     system_prompt: Optional[str] = None,
-    model: str = "llama3-8b-8192",
+    model: Optional[str] = None,
     temperature: float = 0.3,
     max_tokens: int = 512
 ) -> str:
@@ -63,6 +63,11 @@ async def groq_chat_completion(
         groq_api_key = config.GROQ_API_KEY
         if not groq_api_key:
             raise ValueError("GROQ_API_KEY not found in configuration")
+        # Determine model list (primary + fallbacks)
+        model_sequence = [model or config.GROQ_MODEL]
+        for fb in getattr(config, "GROQ_MODEL_FALLBACKS", []):
+            if fb not in model_sequence:
+                model_sequence.append(fb)
         
         # Prepare headers
         headers = {
@@ -77,34 +82,48 @@ async def groq_chat_completion(
         
         chat_messages.extend(messages)
         
-        # Prepare payload
-        payload = {
-            "model": model,
-            "messages": chat_messages,
-            "temperature": temperature,
-            "max_tokens": max_tokens
-        }
-        
-        # Make request
-        response = requests.post(
-            "https://api.groq.com/openai/v1/chat/completions",
-            headers=headers,
-            json=payload
-        )
-        
-        # Check if request was successful
-        if response.status_code != 200:
-            raise Exception(f"API request failed with status {response.status_code}: {response.text}")
-        
-        # Parse response
-        result = response.json()
-        
-        # Extract content
-        if "choices" in result and len(result["choices"]) > 0:
-            if "message" in result["choices"][0] and "content" in result["choices"][0]["message"]:
-                return result["choices"][0]["message"]["content"]
-        
-        raise Exception("Unexpected response structure from Groq API")
+        last_error = None
+        for mdl in model_sequence:
+            # Prepare payload
+            payload = {
+                "model": mdl,
+                "messages": chat_messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens
+            }
+            # Make request
+            response = requests.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers=headers,
+                json=payload
+            )
+            # If request failed, try next model on decommission or 400-series
+            if response.status_code != 200:
+                last_error = f"API request failed with status {response.status_code}: {response.text}"
+                # If model decommissioned, continue to fallback
+                try:
+                    data = response.json()
+                    msg = str(data)
+                except Exception:
+                    msg = response.text
+                if "model_decommissioned" in msg or "decommissioned" in msg or response.status_code in (400, 404):
+                    continue
+                # Other errors: break
+                break
+            # Parse response
+            result = response.json()
+            # Extract content
+            if "choices" in result and len(result.get("choices", [])) > 0:
+                message_obj = result["choices"][0].get("message", {})
+                content = message_obj.get("content")
+                if content:
+                    return content
+            # Unexpected structure; try next
+            last_error = "Unexpected response structure from Groq API"
+            continue
+
+        # If we exhausted models, raise last error
+        raise Exception(last_error or "Groq API request failed")
         
     except Exception as e:
         print(f"Error in groq_chat_completion: {e}")

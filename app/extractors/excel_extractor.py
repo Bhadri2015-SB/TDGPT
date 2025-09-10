@@ -1,69 +1,167 @@
 import json
 import os
+from typing import List
 import aiofiles
 import pandas as pd
 
 from app.utils.file_handler import change_to_processed
-# from app.core.logger import #app_logger  
+
+
+def _create_table_html(rows: List[List[str]]) -> str:
+    if not rows:
+        return "<table></table>"
+    html = ["<table>"]
+    if len(rows) > 1:
+        html.append("<thead>\n<tr>")
+        html.extend([f"<th>{cell}</th>" for cell in rows[0]])
+        html.append("</tr>\n</thead>")
+        html.append("<tbody>")
+        for r in rows[1:]:
+            html.append("<tr>")
+            html.extend([f"<td>{cell}</td>" for cell in r])
+            html.append("</tr>")
+        html.append("</tbody>")
+    else:
+        html.append("<tr>")
+        html.extend([f"<td>{cell}</td>" for cell in rows[0]])
+        html.append("</tr>")
+    html.append("</table>")
+    return "\n".join(html)
+
+
+def _create_table_markdown(rows: List[List[str]]) -> str:
+    if not rows:
+        return ""
+    if len(rows) == 1:
+        return "| " + " | ".join(rows[0]) + " |"
+    md = "| " + " | ".join(rows[0]) + " |\n"
+    md += "| " + " | ".join(["-" * max(1, len(c)) for c in rows[0]]) + " |\n"
+    for r in rows[1:]:
+        md += "| " + " | ".join(r) + " |\n"
+    return md.strip()
+
+
+def _create_table_csv(rows: List[List[str]]) -> str:
+    import io, csv
+    buf = io.StringIO()
+    writer = csv.writer(buf, quoting=csv.QUOTE_ALL, lineterminator='\n')
+    for r in rows:
+        writer.writerow(["" if c is None else str(c) for c in r])
+    return buf.getvalue().replace('\r\n', '\n').rstrip("\n")
+
+
+def _create_table_plain_text(rows: List[List[str]]) -> str:
+    if not rows:
+        return ""
+    num_cols = max(len(r) for r in rows)
+    widths = [0] * num_cols
+    for r in rows:
+        for i, c in enumerate(r):
+            widths[i] = max(widths[i], len(str(c)))
+    lines = []
+    for r in rows:
+        cells = []
+        for i in range(num_cols):
+            val = "" if i >= len(r) or r[i] is None else str(r[i])
+            cells.append(val.ljust(widths[i]))
+        lines.append("  ".join(cells).rstrip())
+    return "\n".join(lines)
+
+
+def _page_from_sheet(sheet_name: str, df: pd.DataFrame, page_number: int) -> dict:
+    df2 = df.fillna("").astype(str)
+    headers = list(map(str, df2.columns.tolist()))
+    rows: List[List[str]] = [headers]
+    for _, row in df2.iterrows():
+        rows.append([str(row.get(h, "")) for h in headers])
+
+    table_item = {
+        "type": "table",
+        "rows": rows,
+        "html": _create_table_html(rows),
+        "md": _create_table_markdown(rows),
+        "isPerfectTable": True,
+        "csv": _create_table_csv(rows),
+        "bBox": {"x": 72.8, "y": 72.0, "w": 449.8, "h": 20 + (len(rows) * 25)},
+    }
+
+    heading_item = {
+        "type": "heading",
+        "value": f"Sheet: {sheet_name}",
+        "md": f"## Sheet: {sheet_name}",
+        "bBox": {"x": 72.8, "y": 40.0, "w": 449.8, "h": 28},
+        "lvl": 2,
+    }
+
+    text_block = _create_table_plain_text(rows)
+    text_with_page = f"{text_block}\n\n{page_number}"
+    md_full = _create_table_markdown(rows)
+    md_with_page = f"{md_full}\n\n{page_number}\n"
+
+    page_images = [{
+        "name": f"page_{page_number}.jpg",
+        "height": 841.889763779528,
+        "width": 595.303937007874,
+        "x": 0,
+        "y": 0,
+        "original_width": 2263,
+        "original_height": 3200,
+        "type": "full_page_screenshot",
+    }]
+
+    return {
+        "page": page_number,
+        "text": text_with_page,
+        "md": md_with_page,
+        "images": page_images,
+        "charts": [],
+        "items": [heading_item, table_item],
+        "status": "OK",
+        "originalOrientationAngle": 0,
+        "links": [],
+        "width": 595.303937007874,
+        "height": 841.889763779528,
+        "triggeredAutoMode": False,
+        "parsingMode": "premium",
+        "structuredData": None,
+        "noStructuredContent": False,
+        "noTextContent": len(text_block.strip()) == 0,
+        "pageHeaderMarkdown": f"Sheet: {sheet_name}",
+        "pageFooterMarkdown": f"\n{page_number}\n",
+        "confidence": 1,
+    }
 
 
 async def extract_excel_content(file_path, *_):
     try:
         ext = os.path.splitext(file_path)[1].lower()
-        #app_logger.info(f"Starting tabular file extraction: {file_path} (Extension: {ext})")
-
         if ext in [".xlsx", ".xls"]:
-            #app_logger.debug("Reading Excel file using openpyxl...")
             sheets = pd.read_excel(file_path, sheet_name=None, engine="openpyxl")
         elif ext == ".csv":
-            #app_logger.debug("Reading CSV file...")
             df = pd.read_csv(file_path)
             sheets = {"Sheet1": df}
         else:
-            msg = f"Unsupported tabular file format: {ext}"
-            #app_logger.error(msg)
-            return {"error": msg}
-
+            return {"error": f"Unsupported tabular file format: {ext}"}
     except Exception as e:
-        #app_logger.exception(f"Failed to read the tabular file: {file_path}")
         return {"error": str(e)}
 
-    content = []
-    for sheet, df in sheets.items():
-        #app_logger.info(f"Processing sheet: {sheet} with {len(df)} rows")
-        df = df.fillna("").astype(str)
+    pages: List[dict] = []
+    page_no = 1
+    for sheet_name, df in sheets.items():
+        pages.append(_page_from_sheet(sheet_name, df, page_no))
+        page_no += 1
 
-        for idx, row in df.iterrows():
-            row_data = row.to_dict()
-            if any(cell.strip() for cell in row_data.values()):
-                content.append({
-                    "sheet": sheet,
-                    "row_number": idx + 1,
-                    "row_data": row_data
-                })
+    result = {"pages": pages}
 
-    file_name = os.path.basename(file_path)
-    result = {
-        "metadata": {
-            "file_name": file_name,
-            "file_type": "excel" if ext in [".xlsx", ".xls"] else "csv",
-            "file_size": f"{os.path.getsize(file_path)/1024:.2f} KB",
-            "sheet_count": len(sheets)
-        },
-        "rows_extracted": len(content),
-        "content": content,
-        "summary": "Tabular extraction complete."
-    }
-
+    base = os.path.splitext(os.path.basename(file_path))[0]
+    out_ext = ext.replace('.', '')
+    output_path = os.path.join("output", f"{base}.{out_ext}.json")
+    os.makedirs("output", exist_ok=True)
     try:
-        output_path = f"output/{file_name}.json"
-        #app_logger.info(f"Writing extracted data to {output_path}")
         async with aiofiles.open(output_path, "w", encoding="utf-8") as f:
             await f.write(json.dumps(result, indent=2, ensure_ascii=False))
     except Exception as e:
-        #app_logger.exception("Failed to write the JSON output file")
         raise IOError(f"Failed to write JSON output file: {e}")
 
     await change_to_processed(str(file_path), "Excel" if ext in [".xlsx", ".xls"] else "CSV")
-    #app_logger.info(f"File processed and moved: {file_path}")
     return result

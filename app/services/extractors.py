@@ -1,7 +1,8 @@
 from app.extractors.json_extractor import flatten_json_file
 from app.extractors.sql_script_extractor import extract_sql_from_script
 from app.extractors.sqlite_extractor import extract_sqlite_data
-from app.extractors.word_extractor import process_word_file
+from app.extractors.word_extractor import extract_word_content
+
 from app.extractors.pdf_extractor import extract_pdf_content
 from app.extractors.markdown_extractor import extract_markdown_content
 from app.extractors.ppt_extractor import extract_ppt_content
@@ -12,7 +13,8 @@ from app.services.image_caption import describe_image
 
 PROCESSOR_MAP = {
     "PDF": extract_pdf_content,
-    "Word": process_word_file,
+    "Word": extract_word_content,
+
     "MD": extract_markdown_content,
     "PPT": extract_ppt_content,
     "Excel": extract_excel_content,

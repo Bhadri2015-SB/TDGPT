@@ -58,7 +58,15 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 if not GROQ_API_KEY:
     raise ValueError("GROQ_API_KEY is not set in environment variables.")
 
-GROQ_MODEL = os.getenv("GROQ_MODEL", "llama3-8b-8192")
+# Default to a currently supported Groq model; allow env override and define fallbacks
+GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
+GROQ_MODEL_FALLBACKS = [
+    m.strip() for m in os.getenv(
+        "GROQ_MODEL_FALLBACKS",
+        # Reasonable, commonly available Groq models as of 2024/2025
+        "llama-3.1-70b, mixtral-8x7b-32768"
+    ).split(",") if m.strip()
+]
 
 
 SAVE_IMAGES = True

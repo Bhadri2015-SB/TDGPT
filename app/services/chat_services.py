@@ -103,10 +103,12 @@ async def process_chat_for_user(
             
             
 
-        
+        # Process retrieval response (enhanced format)
         context_used = True
         answer: str
         images: List[Dict] = []
+        query_type = "text"
+        context_sources = {}
 
         if isinstance(answer_or_error, dict):
             if "error" in answer_or_error:
@@ -116,9 +118,11 @@ async def process_chat_for_user(
                     f"({answer_or_error['error']}). Please try again later."
                 )
             else:
-               
+                # Enhanced response format
                 answer = str(answer_or_error.get("answer", "")).strip()
                 images = answer_or_error.get("images", [])
+                query_type = answer_or_error.get("query_type", "text")
+                context_sources = answer_or_error.get("context_sources", {})
         else:
             answer = str(answer_or_error or "").strip()
             
@@ -126,7 +130,11 @@ async def process_chat_for_user(
             context_used = False
             answer = "The answer is not available in the provided context."
         else:
-            answer = f"Hi {user.username}, {answer}"
+            # Add personalized greeting
+            if query_type == "visual" and images:
+                answer = f"Hi {user.username}, {answer}\n\nI found {len(images)} relevant image(s) for your visual query."
+            else:
+                answer = f"Hi {user.username}, {answer}"
 
         elapsed_ms = _ms_since(start)
 
@@ -147,6 +155,8 @@ async def process_chat_for_user(
         return {
             "answer": answer,
             "images": images, 
+            "query_type": query_type,
+            "context_sources": context_sources,
             "username": user.username,
             "conversation_id": convo.id,
             "context_used": context_used,
