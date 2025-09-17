@@ -1,4 +1,4 @@
-
+﻿
 from __future__ import annotations
 
 import asyncio
@@ -817,7 +817,7 @@ async def retrival(
                     config.OUTPUT_DIRECTORY / file_name,
                     (_P(config.BASE_DIR).parent / "output" / file_name),
                 ]
-                # First pass: exact normalized phrase containment in HEADINGS wins outright
+                # First pass: exact normalized phrase containment wins outright
                 exact_matches: List[int] = []
                 # Second pass: token + phrase-weight scoring
                 best = None
@@ -836,8 +836,6 @@ async def retrival(
                         # Build a bag from page-level text/md, items, and image anchors/OCR
                         items2 = p.get("items") or []
                         page_text_chunks = []
-                        headings: List[str] = []
-                        table_cells = 0
                         # Page-level text and md (some extractors keep step lines here)
                         try:
                             if p.get("text"):
@@ -850,19 +848,8 @@ async def retrival(
                         except Exception:
                             pass
                         for it in items2:
-                            t = (it.get("type") or it.get("item_type") or "").lower()
-                            if t in ("text", "heading"):
-                                val_txt = (it.get("value") or it.get("md") or "")
-                                page_text_chunks.append(val_txt)
-                                if t == "heading":
-                                    headings.append(val_txt)
-                            elif t == "table":
-                                rows = it.get("rows") or []
-                                try:
-                                    for r in rows:
-                                        table_cells += len(r)
-                                except Exception:
-                                    pass
+                            if it.get("type") in ("text", "heading"):
+                                page_text_chunks.append((it.get("value") or it.get("md") or ""))
                         # Include OCR/anchors from images on the page
                         for im in (p.get("images") or []):
                             a = im.get("anchors") or {}
@@ -872,71 +859,25 @@ async def retrival(
                             for e in (im.get("ocr") or []):
                                 page_text_chunks.append(e.get("text") or "")
                         bag = " \n ".join(page_text_chunks)
-                        # Exact phrase pass (in headings only)
+                        # Exact phrase pass
                         try:
-                            if q_ns and any(q_ns in _norm_ns(hv) for hv in headings):
+                            if q_ns and (q_ns in _norm_ns(bag)):
                                 exact_matches.append(pn)
                                 continue
                         except Exception:
                             pass
-                        # Score: token overlap + phrase containment + heading-aware + table density - TOC-like penalty
+                        # Score: token overlap + phrase containment bonus + heading emphasis
                         tok_sc = _overlap2(qt, bag)
                         ns_sc = 5.0 if (q_ns and q_ns in _norm_ns(bag) and len(q_ns) >= 10) else 0.0
-                        head_bonus = 0.0
-                        try:
-                            for hv in headings:
-                                hns = _norm_ns(hv)
-                                if hns and (hns == q_ns or q_ns in hns or hns in q_ns):
-                                    head_bonus = max(head_bonus, 10.0)
-                                else:
-                                    htok = set(_tokens2(hv))
-                                    inter = len([t for t in qt if t in htok])
-                                    if htok and inter / max(1, len(htok)) >= 0.6:
-                                        head_bonus = max(head_bonus, 6.0)
-                        except Exception:
-                            pass
-                        # small boost if layout suggests procedural text present
-                        step_boost = 1.0 if (tok_sc >= 1 and len(page_text_chunks) >= 2) else 0.0
-                        # table density bonus (helps large tables like troubleshooting lists)
-                        table_bonus = 0.0
-                        if tok_sc >= 1 or head_bonus > 0 or ns_sc > 0:
-                            # each 30 cells ~ +1 up to +8
-                            table_bonus = min(8.0, (float(table_cells) / 30.0))
-                        # TOC-like penalty: many dot leaders or trailing page numbers across lines
-                        toc_pen = 0.0
-                        try:
-                            lines = [ln.strip() for ln in (bag.splitlines() if isinstance(bag, str) else []) if ln.strip()]
-                            if lines:
-                                dotleaders = sum(1 for ln in lines if _re5.search(r"\.{3,}", ln))
-                                trailing_nums = sum(1 for ln in lines if _re5.search(r"\b\d{1,3}\s*$", ln))
-                                ratio = (dotleaders + trailing_nums) / max(1, len(lines))
-                                # apply penalty only when no strong heading match
-                                if head_bonus < 8.0 and ratio >= 0.3:
-                                    toc_pen = min(6.0, 12.0 * ratio)
-                        except Exception:
-                            pass
-                        sc = tok_sc + ns_sc + head_bonus + step_boost + table_bonus - toc_pen
-                        try:
-                            # Debug: log salient features for pages with heading or TOC signals
-                            if head_bonus > 0 or toc_pen > 0:
-                                print(f"[JSON-Page-Inference] file={file_name} page={pn} tok_sc={tok_sc} head_bonus={head_bonus} table_cells={table_cells} toc_pen={toc_pen} score={sc}")
-                        except Exception:
-                            pass
+                        # small boost if the page includes "step" near the query tokens
+                        step_boost = 1.0 if ("step" in bag.lower() and tok_sc >= 1) else 0.0
+                        sc = tok_sc + ns_sc + step_boost
                         if sc > best_sc:
                             best_sc = sc
                             best = pn
                 if exact_matches:
                     # If multiple, prefer the earliest page number
-                    sel = sorted(set(exact_matches))[0]
-                    try:
-                        print(f"[JSON-Page-Inference] exact heading match -> page {sel}")
-                    except Exception:
-                        pass
-                    return sel
-                try:
-                    print(f"[JSON-Page-Inference] best_page={best} best_sc={best_sc}")
-                except Exception:
-                    pass
+                    return sorted(set(exact_matches))[0]
                 return best if best_sc > 0 else None
 
             # If JSON scoring finds a strong page on the primary file, prefer it over vector top
@@ -944,10 +885,6 @@ async def retrival(
             if json_best_page is not None:
                 best_node_page = json_best_page
                 primary_pages = [json_best_page]
-                try:
-                    print(f"[Retrieval] JSON page inference selected page {json_best_page} for {primary_file}")
-                except Exception:
-                    pass
         except Exception:
             pass
 
@@ -1075,88 +1012,17 @@ async def retrival(
             if target_page is not None:
                 filtered_text_nodes = [n for n in text_nodes if n.node.metadata.get("page_number") == target_page]
                 retrieved_text = "\n\n".join([n.node.text for n in filtered_text_nodes if hasattr(n.node, 'text')])
-                # If vector nodes missed this page (e.g., table-heavy pages), hydrate from JSON page content
-                if not retrieved_text.strip() and target_file:
-                    try:
-                        from pathlib import Path as _P_hy
-                        json_candidates_hy = [
-                            config.OUTPUT_DIRECTORY / target_file,
-                            (_P_hy(config.BASE_DIR).parent / "output" / target_file),
-                        ]
-                        def _table_text(it: Dict) -> str:
-                            # prefer markdown/html/csv if present; else join cell texts
-                            for k in ("md", "html", "csv"):
-                                v = it.get(k)
-                                if isinstance(v, str) and v.strip():
-                                    return v
-                            rows = it.get("rows") or []
-                            parts = []
-                            for r in rows:
-                                try:
-                                    parts.append("\t".join(str(c) for c in r))
-                                except Exception:
-                                    parts.append(" ".join(str(c) for c in r))
-                            return "\n".join(parts)
-                        page_text_hy = None
-                        for jp in json_candidates_hy:
-                            if not jp.exists():
-                                continue
-                            data_hy = _safe_json_load(jp) or {}
-                            for p_hy in (data_hy.get("pages") or []):
-                                try:
-                                    pn_hy = int(p_hy.get("page") or p_hy.get("page_number") or -1)
-                                except Exception:
-                                    pn_hy = -1
-                                if pn_hy != int(target_page):
-                                    continue
-                                chunks = []
-                                if p_hy.get("text"):
-                                    chunks.append(p_hy.get("text") or "")
-                                if p_hy.get("md"):
-                                    chunks.append(p_hy.get("md") or "")
-                                for it in (p_hy.get("items") or []):
-                                    t = (it.get("type") or it.get("item_type") or "").lower()
-                                    if t in ("text", "heading"):
-                                        chunks.append((it.get("value") or it.get("md") or ""))
-                                    elif t == "table":
-                                        chunks.append(_table_text(it))
-                                page_text_hy = "\n".join([c for c in chunks if isinstance(c, str) and c.strip()])
-                                break
-                            if page_text_hy:
-                                break
-                        if page_text_hy and page_text_hy.strip():
-                            retrieved_text = page_text_hy
-                    except Exception:
-                        pass
-            # Robust override: if a page contains a HEADING matching the query (normalized),
-            # force target_page to that page to avoid drift to TOC or references.
+            # Robust override: if the JSON contains the exact normalized query phrase on a page,
+            # force target_page to that page to avoid drift (e.g., Step 6 on page 17).
             try:
                 if target_file and (query or '').strip():
                     import re as _re_fix
                     from pathlib import Path as _P_fix
                     q_full_ns_fix = _re_fix.sub(r"\s+", "", (query or "").lower())
-                    def _norm_head2(s: str) -> str:
-                        s = s or ""
-                        s = _re_fix.sub(r"^\s*#+\s*", "", s)
-                        s = _re_fix.sub(r"^\s*\d+\s*[\.:)\-]*\s*", "", s)
-                        return _re_fix.sub(r"[^a-z0-9]+", " ", s.lower()).strip()
-                    qh2 = _norm_head2(query)
-                    # Try both target_file and primary_file, with .json fallback if needed
-                    cand_names = []
-                    for nm in [target_file, primary_file]:
-                        if not nm:
-                            continue
-                        cand_names.append(nm)
-                        if not nm.endswith('.json'):
-                            cand_names.append(f"{nm}.json")
-                    seen = set()
-                    json_candidates_fix = []
-                    for nm in cand_names:
-                        if nm in seen:
-                            continue
-                        seen.add(nm)
-                        json_candidates_fix.append(config.OUTPUT_DIRECTORY / nm)
-                        json_candidates_fix.append((_P_fix(config.BASE_DIR).parent / "output" / nm))
+                    json_candidates_fix = [
+                        config.OUTPUT_DIRECTORY / target_file,
+                        (_P_fix(config.BASE_DIR).parent / "output" / target_file),
+                    ]
                     for jp in json_candidates_fix:
                         if not jp.exists():
                             continue
@@ -1168,86 +1034,26 @@ async def retrival(
                                 pn_fix = -1
                             if pn_fix <= 0:
                                 continue
+                            parts_fix = [
+                                (p_fix.get("text") or ""),
+                                (p_fix.get("md") or ""),
+                            ]
                             for it_fix in (p_fix.get("items") or []):
-                                if (it_fix.get("type") or it_fix.get("item_type") or "").lower() == "heading":
-                                    hv = (it_fix.get("value") or it_fix.get("md") or "")
-                                    if qh2 and _norm_head2(hv) == qh2:
-                                        target_page = pn_fix
-                                        raise StopIteration
+                                if it_fix.get("type") in ("text", "heading"):
+                                    parts_fix.append((it_fix.get("value") or it_fix.get("md") or ""))
+                            for im_fix in (p_fix.get("images") or []):
+                                a_fix = im_fix.get("anchors") or {}
+                                parts_fix.append(((a_fix.get("heading") or {}).get("text") or ""))
+                                parts_fix.append(((a_fix.get("above_text") or {}).get("text") or ""))
+                                parts_fix.append(((a_fix.get("below_text") or {}).get("text") or ""))
+                                for e_fix in (im_fix.get("ocr") or []):
+                                    parts_fix.append(e_fix.get("text") or "")
+                            bag_ns_fix = _re_fix.sub(r"\s+", "", (" ".join(parts_fix)).lower())
+                            if q_full_ns_fix and (q_full_ns_fix in bag_ns_fix):
+                                target_page = pn_fix
+                                raise StopIteration
             except StopIteration:
                 pass
-            except Exception:
-                pass
-            # After final target_page is chosen, re-filter/re-hydrate text to the selected page
-            try:
-                if target_page is not None:
-                    # Re-filter vector nodes
-                    filtered_text_nodes2 = [n for n in text_nodes if n.node.metadata.get("page_number") == target_page]
-                    retrieved_text = "\n\n".join([n.node.text for n in filtered_text_nodes2 if hasattr(n.node, 'text')])
-                    if (not retrieved_text.strip()) and target_file:
-                        # Hydrate from JSON using robust filename options
-                        from pathlib import Path as _P_hy2
-                        cand_names2 = []
-                        for nm in [target_file, primary_file]:
-                            if not nm:
-                                continue
-                            cand_names2.append(nm)
-                            if not nm.endswith('.json'):
-                                cand_names2.append(f"{nm}.json")
-                        seen2 = set()
-                        json_candidates_hy2 = []
-                        for nm in cand_names2:
-                            if nm in seen2:
-                                continue
-                            seen2.add(nm)
-                            json_candidates_hy2.append(config.OUTPUT_DIRECTORY / nm)
-                            json_candidates_hy2.append((_P_hy2(config.BASE_DIR).parent / "output" / nm))
-                        def _table_text2(it: Dict) -> str:
-                            for k in ("md", "html", "csv"):
-                                v = it.get(k)
-                                if isinstance(v, str) and v.strip():
-                                    return v
-                            rows = it.get("rows") or []
-                            parts = []
-                            for r in rows:
-                                try:
-                                    parts.append("\t".join(str(c) for c in r))
-                                except Exception:
-                                    parts.append(" ".join(str(c) for c in r))
-                            return "\n".join(parts)
-                        page_text_hy2 = None
-                        for jp in json_candidates_hy2:
-                            if not jp.exists():
-                                continue
-                            data_hy2 = _safe_json_load(jp) or {}
-                            for p2 in (data_hy2.get("pages") or []):
-                                try:
-                                    pn2 = int(p2.get("page") or p2.get("page_number") or -1)
-                                except Exception:
-                                    pn2 = -1
-                                if pn2 != int(target_page):
-                                    continue
-                                chunks = []
-                                if p2.get("text"):
-                                    chunks.append(p2.get("text") or "")
-                                if p2.get("md"):
-                                    chunks.append(p2.get("md") or "")
-                                for it in (p2.get("items") or []):
-                                    t = (it.get("type") or it.get("item_type") or "").lower()
-                                    if t in ("text", "heading"):
-                                        chunks.append((it.get("value") or it.get("md") or ""))
-                                    elif t == "table":
-                                        chunks.append(_table_text2(it))
-                                page_text_hy2 = "\n".join([c for c in chunks if isinstance(c, str) and c.strip()])
-                                break
-                            if page_text_hy2:
-                                break
-                        if page_text_hy2 and page_text_hy2.strip():
-                            retrieved_text = page_text_hy2
-                    try:
-                        print(f"[Retrieval] Final target_page={target_page} for {target_file} (primary={primary_file})")
-                    except Exception:
-                        pass
             except Exception:
                 pass
            
@@ -1457,37 +1263,6 @@ async def retrival(
             except Exception:
                 pass
 
-            # Ensure an image from the selected page is shown; if none match, use the page screenshot
-            try:
-                if target_file and (target_page is not None):
-                    have_match = any((im.get("page_number") == target_page) for im in (images or []))
-                    if (not images) or (not have_match):
-                        from pathlib import Path as _P_img
-                        fname_cur = target_file
-                        prefix_cur = _derive_image_prefix(fname_cur)
-                        shot_pref = _P_img(config.OUTPUT_DIRECTORY) / "images" / f"{prefix_cur}_page_{int(target_page)}.jpg"
-                        shot_gen = _P_img(config.OUTPUT_DIRECTORY) / "images" / f"page_{int(target_page)}.jpg"
-                        shot = shot_pref if shot_pref.exists() else shot_gen
-                        if shot.exists():
-                            sname = shot.name
-                            images = [{
-                                "filename": sname,
-                                "url": f"/output/images/{sname}",
-                                "score": 1.0,
-                                "model_used": "page-screenshot",
-                                "detailed_description": "",
-                                "confidence": "high",
-                                "priority": "primary",
-                                "page_number": int(target_page),
-                                "page_rank": 2
-                            }]
-                            try:
-                                print(f"[Retrieval] Same-page image fallback -> screenshot {sname} for page {target_page}")
-                            except Exception:
-                                pass
-            except Exception:
-                pass
-
             if target_file:
                 try:
                     from pathlib import Path as _Path
@@ -1683,40 +1458,45 @@ async def retrival(
                             strong_lock = False
                 except Exception:
                     pass
-            # Re-apply exact-HEADING lock AFTER heuristic page scoring to prevent override to TOC-like pages.
-            # Only lock when a page has a heading whose normalized text exactly equals the query (numbers/punct removed).
+            # Re-apply exact-phrase lock AFTER heuristic page scoring to prevent override
             try:
                 if target_file and (query or '').strip():
                     import re as _re_fix2
                     from pathlib import Path as _P_fix2
-                    def _norm_head_fix2(s: str) -> str:
-                        s = s or ""
-                        s = _re_fix2.sub(r"^\s*#+\s*", "", s)               # drop markdown hashes
-                        s = _re_fix2.sub(r"^\s*\d+\s*[\.:)\-]*\s*", "", s)  # drop leading numbering like "6." or "6)"
-                        return _re_fix2.sub(r"[^a-z0-9]+", " ", s.lower()).strip()
-                    qh_fix2 = _norm_head_fix2(query)
-                    if qh_fix2:
-                        json_candidates_fix2 = [
-                            config.OUTPUT_DIRECTORY / target_file,
-                            (_P_fix2(config.BASE_DIR).parent / "output" / target_file),
-                        ]
-                        for jp2 in json_candidates_fix2:
-                            if not jp2.exists():
+                    q_full_ns_fix2 = _re_fix2.sub(r"\s+", "", (query or "").lower())
+                    json_candidates_fix2 = [
+                        config.OUTPUT_DIRECTORY / target_file,
+                        (_P_fix2(config.BASE_DIR).parent / "output" / target_file),
+                    ]
+                    for jp2 in json_candidates_fix2:
+                        if not jp2.exists():
+                            continue
+                        data_fix2 = _safe_json_load(jp2) or {}
+                        for p_fix2 in (data_fix2.get("pages") or []):
+                            try:
+                                pn_fix2 = int(p_fix2.get("page") or p_fix2.get("page_number") or -1)
+                            except Exception:
+                                pn_fix2 = -1
+                            if pn_fix2 <= 0:
                                 continue
-                            data_fix2 = _safe_json_load(jp2) or {}
-                            for p_fix2 in (data_fix2.get("pages") or []):
-                                try:
-                                    pn_fix2 = int(p_fix2.get("page") or p_fix2.get("page_number") or -1)
-                                except Exception:
-                                    pn_fix2 = -1
-                                if pn_fix2 <= 0:
-                                    continue
-                                for it_fix2 in (p_fix2.get("items") or []):
-                                    if (it_fix2.get("type") or it_fix2.get("item_type")) == "heading":
-                                        hv = (it_fix2.get("value") or it_fix2.get("md") or "")
-                                        if _norm_head_fix2(hv) == qh_fix2:
-                                            target_page = pn_fix2
-                                            raise StopIteration
+                            parts_fix2 = [
+                                (p_fix2.get("text") or ""),
+                                (p_fix2.get("md") or ""),
+                            ]
+                            for it_fix2 in (p_fix2.get("items") or []):
+                                if it_fix2.get("type") in ("text", "heading"):
+                                    parts_fix2.append((it_fix2.get("value") or it_fix2.get("md") or ""))
+                            for im_fix2 in (p_fix2.get("images") or []):
+                                a_fix2 = im_fix2.get("anchors") or {}
+                                parts_fix2.append(((a_fix2.get("heading") or {}).get("text") or ""))
+                                parts_fix2.append(((a_fix2.get("above_text") or {}).get("text") or ""))
+                                parts_fix2.append(((a_fix2.get("below_text") or {}).get("text") or ""))
+                                for e_fix2 in (im_fix2.get("ocr") or []):
+                                    parts_fix2.append(e_fix2.get("text") or "")
+                            bag_ns_fix2 = _re_fix2.sub(r"\s+", "", (" ".join(parts_fix2)).lower())
+                            if q_full_ns_fix2 and (q_full_ns_fix2 in bag_ns_fix2):
+                                target_page = pn_fix2
+                                raise StopIteration
             except StopIteration:
                 pass
             except Exception:
@@ -3647,213 +3427,10 @@ async def retrieval_all_admins(
 
     filtered_images.sort(key=lambda x: x.get("score", 0), reverse=True)
     
-    # Page inference and hydration on the primary file to avoid TOC drift
-    page_text = ""
-    target_page: Optional[int] = None
-    if primary_file:
-        try:
-            import re as _re5
-            from pathlib import Path as _P
-            # Resolve JSON filename for the primary file (handles cases where metadata isn't a .json)
-            json_name = primary_file
-            if not (isinstance(json_name, str) and json_name.endswith('.json')):
-                # Try to infer from images' source_file
-                try:
-                    base_pf = primary_file
-                    base_pf = base_pf.split('_page')[0] if '_page' in base_pf else base_pf
-                    base_pf_simple = base_pf.split('.')[0]
-                    for _im in filtered_images or []:
-                        srcf = _im.get('source_file') or ''
-                        if not srcf:
-                            continue
-                        sbase = srcf.split('_page')[0] if '_page' in srcf else srcf
-                        sbase_simple = sbase.split('.')[0]
-                        if (base_pf in sbase) or (sbase in base_pf) or (base_pf_simple in sbase_simple) or (sbase_simple in base_pf_simple):
-                            json_name = srcf
-                            break
-                except Exception:
-                    pass
-                # Fallback to appending .json
-                if not (isinstance(json_name, str) and json_name.endswith('.json')):
-                    json_name = f"{primary_file}.json"
-            def _tokens2(s: str):
-                return _re5.findall(r"[a-z0-9]+", (s or "").lower())
-            def _overlap2(qt, text: str) -> int:
-                st = set(_tokens2(text))
-                return sum(1 for t in qt if t in st)
-            def _norm_ns(s: str) -> str:
-                return _re5.sub(r"\s+", "", (s or "").lower())
-            def _json_best_page_for_query(file_name: str, q: str) -> Optional[int]:
-                q = (q or "").strip()
-                if not q:
-                    return None
-                qt = _tokens2(q)
-                q_ns = _norm_ns(q)
-                json_candidates = [
-                    config.OUTPUT_DIRECTORY / file_name,
-                    (_P(config.BASE_DIR).parent / "output" / file_name),
-                ]
-                exact_matches: List[int] = []
-                best = None; best_sc = -1.0
-                for jp in json_candidates:
-                    if not jp.exists():
-                        continue
-                    data = _safe_json_load(jp) or {}
-                    for p in (data.get("pages") or []):
-                        try:
-                            pn = int(p.get("page") or p.get("page_number") or -1)
-                        except Exception:
-                            pn = -1
-                        if pn <= 0:
-                            continue
-                        items2 = p.get("items") or []
-                        page_text_chunks = []
-                        headings: List[str] = []
-                        table_cells = 0
-                        if p.get("text"):
-                            page_text_chunks.append(p.get("text") or "")
-                        if p.get("md"):
-                            page_text_chunks.append(p.get("md") or "")
-                        for it in items2:
-                            t = (it.get("type") or it.get("item_type") or "").lower()
-                            if t in ("text", "heading"):
-                                val_txt = (it.get("value") or it.get("md") or "")
-                                page_text_chunks.append(val_txt)
-                                if t == "heading":
-                                    headings.append(val_txt)
-                            elif t == "table":
-                                rows = it.get("rows") or []
-                                try:
-                                    for r in rows:
-                                        table_cells += len(r)
-                                except Exception:
-                                    pass
-                        for im in (p.get("images") or []):
-                            a = im.get("anchors") or {}
-                            page_text_chunks.append(((a.get("heading") or {}).get("text") or ""))
-                            page_text_chunks.append(((a.get("above_text") or {}).get("text") or ""))
-                            page_text_chunks.append(((a.get("below_text") or {}).get("text") or ""))
-                            for e in (im.get("ocr") or []):
-                                page_text_chunks.append(e.get("text") or "")
-                        bag = " \n ".join(page_text_chunks)
-                        # Exact heading match wins
-                        try:
-                            if q_ns and any(q_ns in _norm_ns(hv) for hv in headings):
-                                exact_matches.append(pn)
-                                continue
-                        except Exception:
-                            pass
-                        tok_sc = _overlap2(qt, bag)
-                        ns_sc = 5.0 if (q_ns and q_ns in _norm_ns(bag) and len(q_ns) >= 10) else 0.0
-                        head_bonus = 0.0
-                        try:
-                            for hv in headings:
-                                hns = _norm_ns(hv)
-                                if hns and (hns == q_ns or q_ns in hns or hns in q_ns):
-                                    head_bonus = max(head_bonus, 10.0)
-                                else:
-                                    htok = set(_tokens2(hv))
-                                    inter = len([t for t in qt if t in htok])
-                                    if htok and inter / max(1, len(htok)) >= 0.6:
-                                        head_bonus = max(head_bonus, 6.0)
-                        except Exception:
-                            pass
-                        step_boost = 1.0 if (tok_sc >= 1 and len(page_text_chunks) >= 2) else 0.0
-                        table_bonus = min(8.0, (float(table_cells) / 30.0)) if (tok_sc >= 1 or head_bonus > 0 or ns_sc > 0) else 0.0
-                        toc_pen = 0.0
-                        try:
-                            lines = [ln.strip() for ln in (bag.splitlines() if isinstance(bag, str) else []) if ln.strip()]
-                            if lines:
-                                dotleaders = sum(1 for ln in lines if _re5.search(r"\.{3,}", ln))
-                                trailing_nums = sum(1 for ln in lines if _re5.search(r"\b\d{1,3}\s*$", ln))
-                                ratio = (dotleaders + trailing_nums) / max(1, len(lines))
-                                if head_bonus < 8.0 and ratio >= 0.3:
-                                    toc_pen = min(6.0, 12.0 * ratio)
-                        except Exception:
-                            pass
-                        sc = tok_sc + ns_sc + head_bonus + step_boost + table_bonus - toc_pen
-                        if sc > best_sc:
-                            best_sc = sc; best = pn
-                if exact_matches:
-                    return sorted(set(exact_matches))[0]
-                return best if best_sc > 0 else None
-
-            json_best_page = _json_best_page_for_query(json_name, query)
-            if json_best_page is not None:
-                target_page = int(json_best_page)
-                # Hydrate page-specific text
-                json_candidates_hy = [
-                    config.OUTPUT_DIRECTORY / json_name,
-                    (_P(config.BASE_DIR).parent / "output" / json_name),
-                ]
-                for jp in json_candidates_hy:
-                    if not jp.exists():
-                        continue
-                    data_hy = _safe_json_load(jp) or {}
-                    for p_hy in (data_hy.get("pages") or []):
-                        try:
-                            pn_hy = int(p_hy.get("page") or p_hy.get("page_number") or -1)
-                        except Exception:
-                            pn_hy = -1
-                        if pn_hy != target_page:
-                            continue
-                        chunks = []
-                        if p_hy.get("text"):
-                            chunks.append(p_hy.get("text") or "")
-                        if p_hy.get("md"):
-                            chunks.append(p_hy.get("md") or "")
-                        for it in (p_hy.get("items") or []):
-                            t = (it.get("type") or it.get("item_type") or "").lower()
-                            if t in ("text", "heading"):
-                                chunks.append((it.get("value") or it.get("md") or ""))
-                            elif t == "table":
-                                rows = it.get("rows") or []
-                                for r in rows:
-                                    try:
-                                        chunks.append("\t".join(str(c) for c in r))
-                                    except Exception:
-                                        chunks.append(" ".join(str(c) for c in r))
-                        page_text = "\n".join([c for c in chunks if isinstance(c, str) and c.strip()])
-                        break
-                    if page_text:
-                        break
-        except Exception:
-            pass
-
-    # Now choose final images; if target_page is known, prefer images from that page or page screenshot
-    final_images: List[Dict[str, Any]] = []
-    if target_page is not None:
-        # Keep only images from the primary file and same page
-        same_page_imgs = [im for im in filtered_images if int(im.get("page_number") or -1) == target_page]
-        final_images = same_page_imgs[:6] if is_visual else same_page_imgs[:3]
-        if not final_images:
-            # Screenshot fallback
-            try:
-                from pathlib import Path as _P_img
-                prefix = _derive_image_prefix(json_name if 'json_name' in locals() else primary_file)
-                shot_pref = _P_img(config.OUTPUT_DIRECTORY) / "images" / f"{prefix}_page_{target_page}.jpg"
-                shot_gen = _P_img(config.OUTPUT_DIRECTORY) / "images" / f"page_{target_page}.jpg"
-                shot = shot_pref if shot_pref.exists() else shot_gen
-                if shot.exists():
-                    sname = shot.name
-                    final_images = [{
-                        "filename": sname,
-                        "url": f"/output/images/{sname}",
-                        "score": 1.0,
-                        "model_used": "page-screenshot",
-                        "detailed_description": "",
-                        "confidence": "high",
-                        "priority": "primary",
-                        "page_number": target_page,
-                        "page_rank": 2
-                    }]
-            except Exception:
-                pass
-        # If still empty, fallback to general filtered images
-        if not final_images:
-            final_images = filtered_images[:6] if is_visual else filtered_images[:3]
+    if is_visual:
+        final_images = filtered_images[:6]  # More images for visual queries
     else:
-        final_images = filtered_images[:6] if is_visual else filtered_images[:3]
+        final_images = filtered_images[:3]  # Fewer images for text queries
 
     context_text = "\n\n".join(context_lines)
     
@@ -3880,14 +3457,13 @@ async def retrieval_all_admins(
             else:
                 return "I couldn't find any relevant visual content for your query."
     else:
-        if not context_text.strip() and not page_text.strip():
+        if not context_text.strip():
             if final_images:
                 answer = "I found some relevant images for your query, but no text content was available across the admin documents."
             else:
                 return "The answer is not available in the provided context."
         else:
-            to_send = page_text.strip() or context_text
-            answer = await _llm_call(to_send, query)
+            answer = await _llm_call(context_text, query)
 
     return {
         "answer": answer,
@@ -3895,7 +3471,7 @@ async def retrieval_all_admins(
         "query_type": "visual" if is_visual else "text",
         "context_sources": {
             "indexes_searched": len(index_names),
-            "text_available": bool((page_text or context_text).strip()),
+            "text_available": bool(context_text.strip()),
             "images_found": len(final_images),
             "primary_file": primary_file,
             "secondary_files": secondary_files
