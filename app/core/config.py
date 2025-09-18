@@ -31,19 +31,12 @@ os.makedirs(IMAGE_OUTPUT_DIR / "img_vision", exist_ok=True)
 
 FILE_TYPE_MAP = {
     "PDF": [".pdf"],
-    "Word": [".doc", ".docx"],
-    "PPT": [".ppt", ".pptx"],
-    "MD": [".md"],
-    "Excel": [".xls", ".xlsx", ".csv"],
-    "SQLITE": [".sqlite", ".db", ".sqlite3"],
-    "SQL_SCRIPT": [".sql"],
-    "JSON": [".json"]
 }
 
 
 MYSQL_USER = os.getenv("MYSQL_USER", "root")
 MYSQL_PASSWORD = os.getenv("MYSQL_ROOT_PASSWORD", "Root")
-MYSQL_DATABASE = os.getenv("MYSQL_DATABASE", "tdgpt")
+MYSQL_DATABASE = os.getenv("MYSQL_DATABASE", "botchat_db")
 
 
 if is_running_in_docker():
@@ -58,12 +51,12 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 if not GROQ_API_KEY:
     raise ValueError("GROQ_API_KEY is not set in environment variables.")
 
-# Default to a currently supported Groq model; allow env override and define fallbacks
+
 GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
 GROQ_MODEL_FALLBACKS = [
     m.strip() for m in os.getenv(
         "GROQ_MODEL_FALLBACKS",
-        # Reasonable, commonly available Groq models as of 2024/2025
+     
         "llama-3.1-70b, mixtral-8x7b-32768"
     ).split(",") if m.strip()
 ]
@@ -71,6 +64,14 @@ GROQ_MODEL_FALLBACKS = [
 
 SAVE_IMAGES = True
 CHUNK_SIZE = 500
+
+
+DEFAULT_ADMIN_NAME = os.getenv("DEFAULT_ADMIN_NAME", "trobot")
+DEFAULT_ADMIN_EMAIL = os.getenv("DEFAULT_ADMIN_EMAIL", "admin@trobot.com")
+DEFAULT_INDEX_NAME = "trobot" 
+
+
+SHARED_PINECONE_INDEX = os.getenv("PINECONE_INDEX_NAME", "maindocs")
 
 SECRET_KEY = os.getenv("SECRET_KEY")
 ACCESS_TOKEN_EXPIRE_MINUTES = os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES")

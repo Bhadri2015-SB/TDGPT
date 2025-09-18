@@ -43,7 +43,6 @@ from app.vector_db.upsert_image import upsert_image_folder
 from app.services.database_service import (
     make_processing,
     update_db_statuses,
-    update_document_processing_status,
 )
 
 
@@ -116,9 +115,7 @@ async def process_owner_files_async(owner: str, admin_id: str, db: AsyncSession)
 
     await make_processing(db, admin_id)
 
-    await create_document_records_for_files(owner, admin_id, db)
-
-   
+    # Extract tasks
     extract_tasks: List = []
     for category_folder in owner_dir.iterdir():
         if not category_folder.is_dir():
@@ -181,9 +178,8 @@ async def process_owner_files_async(owner: str, admin_id: str, db: AsyncSession)
 
     if final_updates:
         await update_db_statuses(db, final_updates)
-        await update_document_records_after_processing(final_updates, db)
 
-   
+    # Remove processed files directory
     await remove_old_folder(owner_dir)
 
 
@@ -248,134 +244,8 @@ async def get_admin_file_statuses(admin_id: str, db: AsyncSession) -> Dict:
 
 
 
-async def update_document_records_after_processing(results: List[Dict], db: AsyncSession) -> None:
-    """
-    Update each Document row based on embedding success/failure.
-    results: list of dicts created in process_owner_files_async() final_updates.
-    """
-    from datetime import datetime
-    from sqlalchemy import select
-    from app.models.models import UploadRecord, Document
-
-    for r in results:
-        if not isinstance(r, dict):
-            continue
-
-        file_name = r.get("file_name")
-        admin_id = r.get("admin_id")
-        status = str(r.get("status", "")).lower()
-        msg = r.get("message", "")
-
-        if not (file_name and admin_id):
-            continue
-
-       
-        upload_q = await db.execute(
-            select(UploadRecord).where(
-                UploadRecord.admin_id == admin_id,
-                UploadRecord.file_name == file_name,
-                UploadRecord.is_deleted == False,
-            ).order_by(UploadRecord.upload_time.desc())
-        )
-        upload_rec = upload_q.scalars().first()  # Get the most recent record
-        if not upload_rec:
-            continue
-
-        
-        doc_q = await db.execute(
-            select(Document).where(
-                Document.upload_record_id == upload_rec.id,
-                Document.is_deleted == False,
-            )
-        )
-        doc = doc_q.scalar_one_or_none()
-        if not doc:
-            continue
-
-        if status == "processed":
-           
-            await update_document_processing_status(
-                db=db,
-                document_id=doc.id,
-                processing_status="completed",
-                processing_completed_at=datetime.utcnow(),
-                embedding_model="BAAI/bge-small-en-v1.5",
-                pinecone_index_name="llamaintegration",
-                total_chunks=_estimate_chunks(doc.file_size),
-            )
-        elif status in ("processing",):
-           
-            await update_document_processing_status(
-                db=db,
-                document_id=doc.id,
-                processing_status="processing",
-            )
-        else:
-            
-            await update_document_processing_status(
-                db=db,
-                document_id=doc.id,
-                processing_status="failed",
-                processing_error=msg or "Unknown embedding error.",
-                processing_completed_at=datetime.utcnow(),
-            )
-
-
-
-async def create_document_records_for_files(owner: str, admin_id: str, db: AsyncSession) -> None:
-    """
-    For each UploadRecord(admin_id=..., status in ['processing','Processing']) create
-    a Document row pointing to the physical uploaded file path under
-    UPLOAD_ROOT/<owner>/<category>/<file>.
-    """
-    from datetime import datetime
-    from sqlalchemy import select
-    from app.models.models import UploadRecord
-    from app.services.database_service import create_document_record
-
-    owner_dir = UPLOAD_ROOT / owner
-    disk_files: Dict[str, Path] = {}
-    if owner_dir.exists():
-        for category_folder in owner_dir.iterdir():
-            if not category_folder.is_dir():
-                continue
-            for fp in category_folder.glob("*"):
-                if fp.is_file():
-                    disk_files[fp.name] = fp
-
-    
-    result = await db.execute(
-        select(UploadRecord).where(
-            UploadRecord.admin_id == admin_id,
-            UploadRecord.status.in_(["processing", "Processing"]),
-            UploadRecord.is_deleted == False,
-        )
-    )
-    upload_records = result.scalars().all()
-
-    for rec in upload_records:
-        fp = disk_files.get(rec.file_name)
-        if not fp:
-           
-            continue
-
-        await create_document_record(
-            admin_id=admin_id,
-            upload_record_id=rec.id,
-            file_path=str(fp),
-            file_size=rec.file_size,
-            file_type=rec.file_type,
-            db=db,
-            processing_status="processing",
-            processing_started_at=datetime.utcnow(),
-            embedding_model="text-embedding-3-small",
-            pinecone_index_name="tdgpt",
-            total_chunks=0,
-        )
-
-
-
 def _estimate_chunks(file_size: Optional[int]) -> Optional[int]:
+    """Simple helper to estimate number of chunks from file size."""
     if not file_size:
         return None
     try:

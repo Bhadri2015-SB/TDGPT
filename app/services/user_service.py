@@ -11,12 +11,22 @@ async def create_user(db: AsyncSession, username: str, email: str, password: str
     """
     Create a new user after checking if username or email already exists.
     """
-    result = await db.execute(
-        select(User).where((User.username == username) | (User.email == email))
-    )
-    existing_user = result.scalar_one_or_none()
-    if existing_user:
-        return None 
+    # If a user with this email exists, update the username and return user
+    email_res = await db.execute(select(User).where(User.email == email))
+    existing_by_email = email_res.scalar_one_or_none()
+    if existing_by_email:
+        # update display name if different
+        if existing_by_email.username != username and username:
+            existing_by_email.username = username
+            await db.commit()
+            await db.refresh(existing_by_email)
+        return existing_by_email
+
+    # If username is taken by some other email, append suffix to avoid uniqueness conflict
+    uname_check = await db.execute(select(User).where(User.username == username))
+    uname_exists = uname_check.scalar_one_or_none()
+    if uname_exists:
+        username = f"{username}-{''.join(random.choices(string.ascii_lowercase+string.digits, k=4))}"
 
     hashed_password = await hash_password(password)
     new_user = User(

@@ -28,7 +28,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.models import Admin, UploadRecord, User, Document
+from app.models.models import Admin, UploadRecord, User
 from app.core.security import hash_password, verify_password
 
 
@@ -301,151 +301,60 @@ async def verify_user_otp(db: AsyncSession, email: str, otp: str) -> bool:
     return False
 
 
-async def create_document_record(
-    admin_id: str,
-    upload_record_id: str,
-    file_path: str,
-    file_size: int,
-    file_type: str,
-    db: AsyncSession,
-    processing_status: str = "pending",
-    embedding_model: Optional[str] = None,
-    pinecone_index_name: Optional[str] = None,
-    total_chunks: Optional[int] = None,
-    is_public: bool = False,
-    processing_started_at: Optional[datetime] = None,
-) -> Union[str, None]:
+async def create_bot_session(db: AsyncSession, session_token: str) -> Optional[str]:
     """
-    Insert a Document row mapped to an admin upload.
+    Create a new bot session record.
     """
     try:
-        file_hash = None
-        if os.path.exists(file_path):
-            with open(file_path, "rb") as f:
-                file_hash = hashlib.sha256(f.read()).hexdigest()
-
-        original_filename = os.path.basename(file_path)
-        now = datetime.utcnow()
-        doc_id = str(uuid.uuid4())
-
-        doc = Document(
-            id=doc_id,
-            admin_id=admin_id,
-            upload_record_id=upload_record_id,
-            original_filename=original_filename,
-            file_type=file_type,
-            file_size=file_size,
-            file_hash=file_hash,
-            processing_status=processing_status,
-            processing_started_at=processing_started_at,
-            embedding_model=embedding_model,
-            pinecone_index_name=pinecone_index_name,
-            total_chunks=total_chunks,
-            is_public=is_public,
-            created_at=now,
-            updated_at=now,
+        from app.models.models import BotSession
+        
+        session_id = str(uuid.uuid4())
+        bot_session = BotSession(
+            id=session_id,
+            session_token=session_token,
+            state="ask_name"
         )
-        db.add(doc)
+        db.add(bot_session)
         await db.commit()
-        return doc_id
+        return session_id
     except SQLAlchemyError as e:
         await db.rollback()
-        print(f"Error creating document record: {e}")
+        print(f"Error creating bot session: {e}")
         return None
 
 
-async def update_document_processing_status(
+async def update_bot_session(
     db: AsyncSession,
-    document_id: str,
-    processing_status: str,
-    processing_error: Optional[str] = None,
-    total_chunks: Optional[int] = None,
-    embedding_model: Optional[str] = None,
-    pinecone_index_name: Optional[str] = None,
-    processing_started_at: Optional[datetime] = None,
-    processing_completed_at: Optional[datetime] = None,
+    session_token: str,
+    state: Optional[str] = None,
+    collected_name: Optional[str] = None,
+    collected_email: Optional[str] = None,
+    user_id: Optional[int] = None,
 ) -> bool:
+    """
+    Update a bot session record.
+    """
     try:
-        res = await db.execute(select(Document).where(Document.id == document_id))
-        doc = res.scalar_one_or_none()
-        if not doc:
+        from app.models.models import BotSession
+        
+        res = await db.execute(select(BotSession).where(BotSession.session_token == session_token))
+        session = res.scalar_one_or_none()
+        if not session:
             return False
 
-        doc.processing_status = processing_status
-        doc.updated_at = datetime.utcnow()
-
-        if processing_error is not None:
-            doc.processing_error = processing_error
-        if total_chunks is not None:
-            doc.total_chunks = total_chunks
-        if embedding_model is not None:
-            doc.embedding_model = embedding_model
-        if pinecone_index_name is not None:
-            doc.pinecone_index_name = pinecone_index_name
-        if processing_started_at is not None:
-            doc.processing_started_at = processing_started_at
-        if processing_completed_at is not None:
-            doc.processing_completed_at = processing_completed_at
-
+        if state is not None:
+            session.state = state
+        if collected_name is not None:
+            session.collected_name = collected_name
+        if collected_email is not None:
+            session.collected_email = collected_email
+        if user_id is not None:
+            session.user_id = user_id
+        
+        session.updated_at = datetime.utcnow()
         await db.commit()
         return True
     except SQLAlchemyError as e:
         await db.rollback()
-        print(f"Error updating document status: {e}")
+        print(f"Error updating bot session: {e}")
         return False
-
-
-async def get_document_by_upload_record(db: AsyncSession, upload_record_id: str) -> Optional[Document]:
-    try:
-        res = await db.execute(
-            select(Document).where(
-                Document.upload_record_id == upload_record_id,
-                Document.is_deleted == False,
-            )
-        )
-        return res.scalar_one_or_none()
-    except SQLAlchemyError:
-        return None
-
-
-async def create_document_records_for_existing_uploads(db: AsyncSession) -> int:
-    """
-    Migration helper: create Document rows for UploadRecords that don't yet
-    have a Document.
-    """
-    try:
-        res = await db.execute(
-            select(UploadRecord).where(
-                UploadRecord.status.in_(["Processed", "Processing"]),
-                UploadRecord.is_deleted == False,
-            )
-        )
-        upload_records = res.scalars().all()
-
-        created = 0
-        for rec in upload_records:
-            existing_doc = await get_document_by_upload_record(db, rec.id)
-            if existing_doc:
-                continue
-
-            doc_id = await create_document_record(
-                admin_id=rec.admin_id,
-                upload_record_id=rec.id,
-                file_path=f"uploads/processed/{rec.file_name}",
-                file_size=rec.file_size,
-                file_type=rec.file_type,
-                db=db,
-                processing_status="completed" if rec.status == "Processed" else "processing",
-                embedding_model="text-embedding-3-small",
-                pinecone_index_name="tdgpt",
-                total_chunks=0,
-                is_public=False,
-            )
-            if doc_id:
-                created += 1
-                print(f"Created document record {doc_id} for existing upload {rec.file_name}")
-
-        return created
-    except Exception as e:
-        print(f"Error creating document records for existing uploads: {e}")
-        return 0

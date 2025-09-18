@@ -116,6 +116,8 @@ async def search_images(query: str, index_name: str, top_k: int = 5) -> List[Dic
                 "source_file": metadata.get("source_file"),
                 "url": metadata.get("url"),
                 "score": match.score,
+                "filename": metadata.get("filename"),
+                "page_number": metadata.get("page_number"),  
                 "full_path": metadata.get("full_path")
             })
         
@@ -134,44 +136,64 @@ async def upsert_image_folder(images_dir: str, admin_name: str):
     from pinecone import Pinecone, ServerlessSpec
     import re
     
-    def _clean_name(name: str) -> str:
-        """Clean admin name for Pinecone index"""
-        cleaned = re.sub(r"[^A-Za-z0-9]", "", name).lower()
-        return cleaned or "defaultindex"
-    
    
-    index_name = _clean_name(admin_name)
+    index_name = config.SHARED_PINECONE_INDEX
     
     pc = Pinecone(api_key=config.PINECONE_API_KEY)
     
    
     if index_name not in pc.list_indexes().names():
-        pc.create_index(name=index_name, dimension=384, metric="cosine",
-                        spec=ServerlessSpec(cloud="aws", region="us-east-1"))
+        try:
+            pc.create_index(name=index_name, dimension=384, metric="cosine",
+                            spec=ServerlessSpec(cloud="aws", region="us-east-1"))
+        except Exception as ce:
+            print(f"[Image-Index-Create-Warning] {ce}")
+            if index_name not in pc.list_indexes().names():
+                return {
+                    "admin_id": admin_name,
+                    "file_name": f"images_from_{images_dir}",
+                    "status": "Embedding failed",
+                    "message": f"Shared index '{index_name}' not available and creation failed: {ce}",
+                }
     
     idx = pc.Index(index_name)
     vectors = []
     processed_images = 0
+    print(f"[IMG-INGEST] Scanning images in {images_dir} for admin {admin_name}")
     
     for img_path in Path(images_dir).rglob("*"):
         if img_path.suffix.lower() in ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.webp']:
             try:
                 vec = await embed_image(img_path)
+              
+                import re as _re
+                fname = img_path.name
+                page_num = None
+                m = _re.search(r"_img_p(\d+)_", fname)
+                if m:
+                    try:
+                        page_num = int(m.group(1))
+                    except Exception:
+                        page_num = None
                 metadata = {
                     "type": "image",
                     "source_file": img_path.name,
                     "full_path": str(img_path),
-                    "url": f"/output/images/{img_path.name}",  
-                    "admin_name": admin_name 
+                    "url": f"/output/images/{img_path.name}",
+                    "admin_name": admin_name,
+                    **({"page_number": page_num} if page_num is not None else {})
                 }
                 vectors.append({"id": f"img::{img_path.name}", "values": vec.tolist(), "metadata": metadata})
                 processed_images += 1
+                if processed_images % 25 == 0:
+                    print(f"[IMG-INGEST] {processed_images} images embedded so far...")
             except Exception as e:
                 print(f"Error processing image {img_path}: {e}")
                 continue
     
     if vectors:
         idx.upsert(vectors=vectors)
+        print(f"[IMG-INGEST] Upserted {processed_images} images into index {index_name}")
     
     return {
         "admin_id": admin_name,

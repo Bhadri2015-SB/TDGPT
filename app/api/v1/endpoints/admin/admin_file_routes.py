@@ -1,11 +1,10 @@
-from fastapi import APIRouter, Depends, UploadFile, File, BackgroundTasks
+from fastapi import APIRouter, Depends, UploadFile, File, BackgroundTasks, Form
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List
 import os
 
 from app.db.session import get_db
 from app.models.models import Admin
-from app.core.security import get_current_admin
 from app.utils.file_handler import save_file
 from app.services.database_service import create_upload_record, get_file_list
 from app.services.process_owner_files_async import (
@@ -22,10 +21,28 @@ router = APIRouter(tags=["admin"])
 async def upload_files(
     files: List[UploadFile] = File(...),
     db: AsyncSession = Depends(get_db),
-    current_admin: Admin = Depends(get_current_admin)
 ):
-    admin_id = current_admin.id
-    admin_name = current_admin.admin_name
+    # Single-tenant mode: use fixed admin_name 'troudz'
+    owner = "troudz"
+    # Ensure a minimal Admin row exists for the single tenant
+    from sqlalchemy import select
+    res = await db.execute(select(Admin).where(Admin.admin_name == owner))
+    admin = res.scalar_one_or_none()
+    if not admin:
+        from app.core.security import hash_password
+        import uuid
+        admin = Admin(
+            id=str(uuid.uuid4()),
+            admin_name=owner,
+            email=f"{owner}@example.local",
+            password_hash=await hash_password("TempPass#123"),
+        )
+        db.add(admin)
+        await db.commit()
+        await db.refresh(admin)
+
+    admin_id = admin.id
+    admin_name = admin.admin_name
     uploaded = []
 
     for file in files:
@@ -45,51 +62,66 @@ async def upload_files(
 
 
 @router.get("/files-status/")
-async def list_files(
-    db: AsyncSession = Depends(get_db),
-    current_admin: Admin = Depends(get_current_admin)
-):
-    files = await get_file_list(current_admin.id, db)
+async def list_files(db: AsyncSession = Depends(get_db)):
+    owner = "troudz"
+    from sqlalchemy import select
+    res = await db.execute(select(Admin).where(Admin.admin_name == owner))
+    admin = res.scalar_one_or_none()
+    if not admin:
+        return {"files": []}
+    files = await get_file_list(admin.id, db)
     return {"files": files}
 
 
 
 @router.post("/process/initiate")
 async def initiate_file_processing(
-    owner: str,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
-    current_admin: Admin = Depends(get_current_admin)
 ):
-    background_tasks.add_task(process_owner_files_async, owner, current_admin.id, db)
-    return process_initiate_response(owner, current_admin.id)
+    owner = "troudz"
+    from sqlalchemy import select
+    res = await db.execute(select(Admin).where(Admin.admin_name == owner))
+    admin = res.scalar_one_or_none()
+    if not admin:
+        raise RuntimeError("Tenant admin not found; upload first.")
+    background_tasks.add_task(process_owner_files_async, owner, admin.id, db)
+    return process_initiate_response(owner, admin.id)
 
 
 
 @router.get("/process/status")
-async def get_file_processing_status(
-    db: AsyncSession = Depends(get_db),
-    current_admin: Admin = Depends(get_current_admin)
-):
-    return await get_admin_file_statuses(current_admin.id, db)
+async def get_file_processing_status(db: AsyncSession = Depends(get_db)):
+    owner = "troudz"
+    from sqlalchemy import select
+    res = await db.execute(select(Admin).where(Admin.admin_name == owner))
+    admin = res.scalar_one_or_none()
+    if not admin:
+        return {"files": []}
+    return await get_admin_file_statuses(admin.id, db)
 
 
 
 @router.post("/process/trigger-task")
-async def trigger_file_processing(
-    background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
-    current_admin: Admin = Depends(get_current_admin)
-):
-    background_tasks.add_task(start_processing, current_admin.admin_name, current_admin.id)
-    return {"message": f"Processing initiated for {current_admin.admin_name}."}
+async def trigger_file_processing(background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)):
+    owner = "troudz"
+    from sqlalchemy import select
+    res = await db.execute(select(Admin).where(Admin.admin_name == owner))
+    admin = res.scalar_one_or_none()
+    if not admin:
+        raise RuntimeError("Tenant admin not found; upload first.")
+    background_tasks.add_task(start_processing, admin.admin_name, admin.id)
+    return {"message": f"Processing initiated for {admin.admin_name}."}
 
 
 
 @router.get("/process/file-process-status/")
-async def get_task_file_processing_status(
-    db: AsyncSession = Depends(get_db),
-    current_admin: Admin = Depends(get_current_admin)
-):
-    files = await get_file_list(current_admin.id, db)
+async def get_task_file_processing_status(db: AsyncSession = Depends(get_db)):
+    owner = "troudz"
+    from sqlalchemy import select
+    res = await db.execute(select(Admin).where(Admin.admin_name == owner))
+    admin = res.scalar_one_or_none()
+    if not admin:
+        return {"files": []}
+    files = await get_file_list(admin.id, db)
     return {"files": files}
