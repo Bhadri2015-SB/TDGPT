@@ -1,11 +1,12 @@
+import os
 import requests
 from typing import Optional
 from app.core import config
 
 
 def chat_complete(system: str, user: str, *, max_tokens: int = 512, temperature: float = 0.3) -> Optional[str]:
-    api_key = config.GROQ_API_KEY
-    model = getattr(config, "GROQ_MODEL", "llama-3.1-8b-instant")
+    api_key = os.getenv("GROQ_API_KEY")
+    model = config.GROQ_MODEL
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     payload = {
         "model": model,

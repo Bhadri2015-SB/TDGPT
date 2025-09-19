@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -9,6 +10,8 @@ from typing import Any, Dict, List, Optional
 import dotenv
 import requests
 from pinecone import Pinecone, ServerlessSpec
+
+from app.vector_db.upsert_image import search_images
 
 from llama_index import VectorStoreIndex, ServiceContext
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
@@ -24,6 +27,9 @@ from app.utils.file_handler import get_file_category
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.models.models import Admin
+
+# Load environment variables
+dotenv.load_dotenv()
 
 
 def _safe_json_load(path: Path) -> Optional[Dict[str, Any]]:
@@ -43,7 +49,7 @@ def _derive_image_prefix(file_name: str) -> str:
         base = file_name
         if base.lower().endswith('.json'):
             base = base[:-5]
-        for ext in ('.pdf', '.docx', '.pptx', '.xlsx'):
+        for ext in ('.pdf',):
             if base.lower().endswith(ext):
                 base = base[: -len(ext)]
                 break
@@ -60,10 +66,10 @@ def _ensure_images_namespaced(json_path: Path) -> None:
         return
     changed = False
     title_norm = re.sub(r"[^\w\-_.]", "_", data.get("title", json_path.stem)) or "doc"
-    # Determine images directory (same directory /images)
+  
     images_dir = json_path.parent / "images"
 
-    # Top-level images (rare) and per-page images
+    
     top_images = data.get("images") or []
     for img in top_images:
         filename = img.get("filename") or img.get("name") or ""
@@ -72,7 +78,7 @@ def _ensure_images_namespaced(json_path: Path) -> None:
             img["filename"] = f"{title_norm}_{img_name}"
             changed = True
 
-    # Page-level images: embed page number in filename for reliable retrieval, e.g. Title_img_p3_1.png
+   
     for page in data.get("pages", []):
         pnum = page.get("page") or page.get("page_number")
         imgs = page.get("images") or []
@@ -81,7 +87,7 @@ def _ensure_images_namespaced(json_path: Path) -> None:
             filename = img.get("filename") or img.get("name")
             if not filename:
                 continue
-            # Skip if already namespaced with title and page marker
+         
             if filename.startswith(title_norm) and ("_img_p" in filename or f"_page_{pnum}" in filename):
                 continue
             ext = ''
@@ -96,9 +102,9 @@ def _ensure_images_namespaced(json_path: Path) -> None:
         try:
             with json_path.open("w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
-            # Attempt to rename physical files to match JSON updates
+          
             if images_dir.exists():
-                # Gather all referenced filenames to map old->new by scanning pages again
+              
                 referenced = []
                 for page in data.get("pages", []):
                     for im in (page.get("images") or []):
@@ -107,11 +113,11 @@ def _ensure_images_namespaced(json_path: Path) -> None:
                         if newf and original and original != newf:
                             referenced.append((original, newf))
                         elif newf and not original:
-                            # Fallback: if we only had an old 'filename' that changed
+                           
                             prev = im.get("_old") or None
                             if prev and prev != newf:
                                 referenced.append((prev, newf))
-                # Also top-level
+            
                 for im in (data.get("images") or []):
                     original = im.get("name") or im.get("original_name") or None
                     newf = im.get("filename") or im.get("name")
@@ -131,22 +137,22 @@ def _ensure_images_namespaced(json_path: Path) -> None:
 
 async def get_available_indexes() -> List[str]:
     """List all Pinecone index names."""
-    pc = Pinecone(api_key=config.PINECONE_API_KEY)
+    pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
     return pc.list_indexes().names()
 
 
 def _clean_name(name: str) -> str:
     """Clean admin name for Pinecone index naming conventions."""
-    # Replace spaces and special chars with hyphens, convert to lowercase
+    
     clean = re.sub(r"[^\w\-]", "-", name.lower())
-    # Remove multiple consecutive hyphens
+   
     clean = re.sub(r"-+", "-", clean)
-    # Remove leading/trailing hyphens
+   
     clean = clean.strip("-")
-    # Ensure it's not empty and not too long
+  
     if not clean:
         clean = "default"
-    return clean[:50]  # Pinecone has index name length limits
+    return clean[:50]  
 
 
 _EMBED_MODEL: Optional[HuggingFaceEmbedding] = None
@@ -172,15 +178,15 @@ async def _combine_page_content(page: Dict) -> str:
     """Combine text content from a page structure into a single string."""
     parts = []
     
-    # Add main page text
+    
     if page.get("text"):
         parts.append(page["text"])
     
-    # Add markdown content
+  
     if page.get("md"):
         parts.append(page["md"])
     
-    # Add structured items (headings, text, etc.)
+
     for item in page.get("items", []):
         if item.get("type") == "heading" and item.get("value"):
             parts.append(f"## {item['value']}")
@@ -188,8 +194,7 @@ async def _combine_page_content(page: Dict) -> str:
             parts.append(item["value"])
         elif item.get("md"):
             parts.append(item["md"])
-    
-    # Add image OCR content
+   
     for image in page.get("images", []):
         for ocr_entry in image.get("ocr", []):
             if ocr_entry.get("text"):
@@ -237,9 +242,9 @@ async def _index_images_from_word_document(json_path: Path, admin_name: str) -> 
     pages = data.get("pages", [])
     
     index_name_clean = config.SHARED_PINECONE_INDEX
-    pc = Pinecone(api_key=config.PINECONE_API_KEY)
+    pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
     
-    # Create shared index if it doesn't exist
+   
     existing = pc.list_indexes().names()
     if index_name_clean not in existing:
         try:
@@ -260,9 +265,9 @@ async def _index_images_from_word_document(json_path: Path, admin_name: str) -> 
     processed_images = 0
     errors = []
     
-    base_dir = json_path.parent  # Assuming images are relative to JSON file directory
+    base_dir = json_path.parent  
     
-    # Process images from all pages
+   
     for page in pages:
         page_num = page.get("page", 0)
         for img in page.get("images", []):
@@ -276,16 +281,16 @@ async def _index_images_from_word_document(json_path: Path, admin_name: str) -> 
                 continue
                 
             try:
-                # Generate CLIP embedding
+               
                 vec = await embed_image(str(img_path))
                 
-                # Extract OCR text from the OCR array if present
+               
                 ocr_text = ""
                 if "ocr" in img and isinstance(img["ocr"], list):
                     ocr_texts = [ocr_item.get("text", "") for ocr_item in img["ocr"] if ocr_item.get("text")]
                     ocr_text = " ".join(ocr_texts)
                 
-                # Prepare metadata
+              
                 metadata = {
                     "type": "image",
                     "source_file": fname,
@@ -307,7 +312,7 @@ async def _index_images_from_word_document(json_path: Path, admin_name: str) -> 
                 errors.append(f"Error processing {img_filename}: {str(e)}")
                 continue
     
-    # Upload vectors
+   
     result = {"processed_images": 0, "errors": errors}
     if vectors:
         try:
@@ -324,29 +329,17 @@ async def _detect_category_from_extracted_file(path: Path) -> str:
     try:
         data = _safe_json_load(path) or {}
         
-        # Check metadata first
+      
         metadata = data.get("metadata", {})
         file_name = metadata.get("file_name", path.name.lower())
         
-        # Infer from file extension
+      
         if file_name.endswith(('.pdf',)):
             return "PDF"
-        elif file_name.endswith(('.docx', '.doc')):
-            return "WORD"
-        elif file_name.endswith(('.xlsx', '.xls', '.csv')):
-            return "EXCEL"
-        elif file_name.endswith(('.pptx', '.ppt')):
-            return "PPT"
-        elif file_name.endswith(('.md', '.markdown')):
-            return "MD"
-        elif file_name.endswith(('.json',)):
-            return "JSON"
-        elif file_name.endswith(('.sql',)):
-            return "SQLITE"
         
-        # Fallback: check data structure
+        
         if "pages" in data:
-            return "PDF"  # Most structured documents use pages
+            return "PDF"  
         elif "worksheets" in data:
             return "EXCEL"
         elif "slides" in data:
@@ -373,13 +366,13 @@ async def upsert_documents_to_pinecone(
 
     try:
         print(f"[INGEST] Start processing doc: {path.name}")
-        # Ensure per-file image namespacing to avoid cross-file collisions
+ 
         try:
             _ensure_images_namespaced(path)
         except Exception:
             pass
             
-        # For bot application, we mainly handle PDF-like documents
+      
         docs = await _load_pdf_like_documents(path)
     except Exception as e:
         return {
@@ -389,11 +382,11 @@ async def upsert_documents_to_pinecone(
             "message": f"Doc build error: {e}",
         }
 
-    # Use shared index instead of per-admin index to avoid quota issues
+
     index_name_clean = config.SHARED_PINECONE_INDEX
 
     try:
-        pc = Pinecone(api_key=config.PINECONE_API_KEY)
+        pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
         existing = pc.list_indexes().names()
         if index_name_clean not in existing:
             try:
@@ -404,7 +397,7 @@ async def upsert_documents_to_pinecone(
                     spec=ServerlessSpec(cloud="aws", region="us-east-1"),
                 )
             except Exception as ce:
-                # If creation fails (likely quota), attempt to proceed assuming index will be created externally
+                
                 print(f"[Index-Create-Warning] Could not create index '{index_name_clean}': {ce}")
                 existing = pc.list_indexes().names()
                 if index_name_clean not in existing:
@@ -436,7 +429,7 @@ async def upsert_documents_to_pinecone(
         await asyncio.to_thread(pipeline.run, documents=docs, show_progress=False)
         print(f"[INGEST] Text embedding complete: {file_base}")
 
-        # Index images for documents that support it
+
         image_result = {"processed_images": 0, "errors": []}
         try:
             image_result = await _index_images_from_word_document(path, admin_name)
@@ -471,15 +464,15 @@ async def upsert_documents_to_pinecone(
 async def delete_document_from_pinecone(file_name: str, admin_name: str) -> Dict[str, Any]:
     """Delete all vectors (text + images) related to a given file from the admin's Pinecone index."""
     try:
-        # Shared single index architecture
+       
         index_name_clean = config.SHARED_PINECONE_INDEX
-        pc = Pinecone(api_key=config.PINECONE_API_KEY)
+        pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
         if index_name_clean not in pc.list_indexes().names():
             return {"status": "not_found", "message": f"Index '{index_name_clean}' does not exist."}
 
         idx = pc.Index(index_name_clean)
 
-        # Delete both text and image vectors
+       
         delete_filter = {
             "$or": [
                 {"file_name": {"$eq": file_name}},
@@ -523,9 +516,9 @@ async def _llm_call(retrieved_text: str, query: str) -> Any:
     """
     
     try:
-        # Use Groq API for LLM call
+        #  Groq API for LLM call
         headers = {
-            "Authorization": f"Bearer {config.GROQ_API_KEY}",
+            "Authorization": f"Bearer {os.getenv('GROQ_API_KEY')}",
             "Content-Type": "application/json"
         }
         
@@ -580,67 +573,6 @@ async def get_admin_indexes_from_db(db: AsyncSession) -> List[str]:
         return []
 
 
-async def _retrieval_single_index(
-    query: str,
-    index_name_clean: str,
-    top_k: int = 5,
-) -> List[Dict[str, Any]]:
-    """
-    Run similarity search in a *single* Pinecone index and return scored hits.
-    Each hit: {index_name, text, score, metadata}.
-    Now includes CLIP-based image search from the unified index.
-    """
-    pc = Pinecone(api_key=config.PINECONE_API_KEY)
-    pinecone_index = pc.Index(index_name_clean)
-    vector_store = PineconeVectorStore(pinecone_index=pinecone_index)
-
-    embed_model = _get_embed_model()
-    service_context = ServiceContext.from_defaults(llm=None, embed_model=embed_model)
-    index = VectorStoreIndex.from_vector_store(vector_store=vector_store, service_context=service_context)
-    retriever = VectorIndexRetriever(index=index, similarity_top_k=top_k)
-
-    nodes = await asyncio.to_thread(retriever.retrieve, query)
-    out: List[Dict[str, Any]] = []
- 
-    for n in nodes:
-        out.append(
-            {
-                "index_name": index_name_clean,
-                "text": n.node.text,
-                "score": getattr(n, "score", None),
-                "metadata": n.node.metadata or {},
-            }
-        )
-    
-    # Also search for images using CLIP
-    try:
-        from app.vector_db.upsert_image import search_images
-        
-        # Get more images to have better selection for page linking
-        clip_images = await search_images(query, index_name_clean, top_k=10)
-        
-        # Add image results to output
-        for img in clip_images:
-            out.append(
-                {
-                    "index_name": index_name_clean,
-                    "text": "", 
-                    "score": img.get("score"),
-                    "metadata": {
-                        "type": "image",
-                        "source_file": img.get("source_file"),
-                        "url": img.get("url"),
-                        "filename": img.get("filename"),
-                        "page_number": img.get("page_number"),  # Add the missing page_number!
-                    },
-                }
-            )
-    except Exception as e:
-        print(f"Image search error for index {index_name_clean}: {e}")
-    
-    return out
-
-
 async def retrieval_all_admins(
     query: str,
     db: AsyncSession,
@@ -655,10 +587,10 @@ async def retrieval_all_admins(
     - Returns unified response with both text answer and single accurate image URL
     """
     try:
-        # Always use shared index (single-index architecture)
+       
         index_name_clean = config.SHARED_PINECONE_INDEX
 
-        pc = Pinecone(api_key=config.PINECONE_API_KEY)
+        pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
         available_indexes = pc.list_indexes().names()
         if index_name_clean not in available_indexes:
             return {
@@ -735,8 +667,6 @@ async def retrieval_all_admins(
                     if abs(top_score - s) < 0.01:
                         primary_pages.append(p)
 
-        # JSON-based page inference: pick the page whose on-page text best matches the query
-        # This avoids vector drift picking a wrong page while keeping same-page guarantees.
         try:
             def _json_best_page_for_query(file_name: str, q: str) -> Optional[int]:
                 import re as _re5
@@ -757,9 +687,9 @@ async def retrieval_all_admins(
                     config.OUTPUT_DIRECTORY / file_name,
                     (_P(config.BASE_DIR).parent / "output" / file_name),
                 ]
-                # First pass: exact normalized phrase containment wins outright
+               
                 exact_matches: List[int] = []
-                # Second pass: token + phrase-weight scoring
+               
                 best = None
                 best_sc = -1.0
                 for jp in json_candidates:
@@ -773,10 +703,10 @@ async def retrieval_all_admins(
                             pn = -1
                         if pn <= 0:
                             continue
-                        # Build a bag from page-level text/md, items, and image anchors/OCR
+                    
                         items2 = p.get("items") or []
                         page_text_chunks = []
-                        # Page-level text and md (some extractors keep step lines here)
+                    
                         try:
                             if p.get("text"):
                                 page_text_chunks.append(p.get("text") or "")
@@ -790,7 +720,7 @@ async def retrieval_all_admins(
                         for it in items2:
                             if it.get("type") in ("text", "heading"):
                                 page_text_chunks.append((it.get("value") or it.get("md") or ""))
-                        # Include OCR/anchors from images on the page
+                      
                         for im in (p.get("images") or []):
                             a = im.get("anchors") or {}
                             page_text_chunks.append(((a.get("heading") or {}).get("text") or ""))
@@ -799,28 +729,28 @@ async def retrieval_all_admins(
                             for e in (im.get("ocr") or []):
                                 page_text_chunks.append(e.get("text") or "")
                         bag = " \n ".join(page_text_chunks)
-                        # Exact phrase pass
+                      
                         try:
                             if q_ns and (q_ns in _norm_ns(bag)):
                                 exact_matches.append(pn)
                                 continue
                         except Exception:
                             pass
-                        # Score: token overlap + phrase containment bonus + heading emphasis
+                     
                         tok_sc = _overlap2(qt, bag)
                         ns_sc = 5.0 if (q_ns and q_ns in _norm_ns(bag) and len(q_ns) >= 10) else 0.0
-                        # small boost if the page includes "step" near the query tokens
+                      
                         step_boost = 1.0 if ("step" in bag.lower() and tok_sc >= 1) else 0.0
                         sc = tok_sc + ns_sc + step_boost
                         if sc > best_sc:
                             best_sc = sc
                             best = pn
                 if exact_matches:
-                    # If multiple, prefer the earliest page number
+                  
                     return sorted(set(exact_matches))[0]
                 return best if best_sc > 0 else None
 
-            # If JSON scoring finds a strong page on the primary file, prefer it over vector top
+    
             json_best_page = _json_best_page_for_query(primary_file, query) if primary_file else None
             if json_best_page is not None:
                 best_node_page = json_best_page
@@ -828,7 +758,7 @@ async def retrieval_all_admins(
         except Exception:
             pass
 
-        # Image search and page-linking logic (robust single-image selection)
+     
         chosen_image = None
         target_file = best_node_file or primary_file
         target_page = best_node_page or (primary_pages[0] if primary_pages else None)
@@ -841,7 +771,7 @@ async def retrieval_all_admins(
                 print(f"[Image-Search-ERROR] {e}")
                 all_images = []
 
-            # 1. Prefer vector-found images already on the target page
+        
             page_linked_images: List[Dict[str, Any]] = []
             for img in all_images:
                 try:
@@ -854,7 +784,6 @@ async def retrieval_all_admins(
                 page_linked_images.sort(key=lambda x: float(x.get("score", 0) or 0.0), reverse=True)
                 chosen_image = page_linked_images[0]
 
-            # 2. If still none, look for any image from same file (vector hits)
             if not chosen_image and all_images:
                 file_images = []
                 for img in all_images:
@@ -865,7 +794,6 @@ async def retrieval_all_admins(
                     file_images.sort(key=lambda x: float(x.get("score", 0) or 0.0), reverse=True)
                     chosen_image = file_images[0]
 
-            # 3. JSON fallback: inspect the source JSON to find inline images for the page
             if not chosen_image:
                 try:
                     from pathlib import Path as _P_fallback
@@ -885,7 +813,7 @@ async def retrieval_all_admins(
                             if pn != int(target_page):
                                 continue
                             imgs = [im for im in (p.get("images") or []) if (im.get("type") or im.get("img_type")) != "full_page_screenshot"]
-                            # Sort inline images by approximate vertical flow + width (prefer wider mid/large content over tiny icons)
+                            
                             if imgs:
                                 try:
                                     imgs.sort(key=lambda im: (
@@ -895,11 +823,11 @@ async def retrieval_all_admins(
                                 except Exception:
                                     pass
                                 pick = None
-                                # Prefer the first non-trivial image (width/page heuristic)
+                              
                                 for im in imgs:
                                     w = float(im.get("width", 0) or 0.0)
                                     h = float(im.get("height", 0) or 0.0)
-                                    if w >= 40 and h >= 40:  # basic noise/icon filter
+                                    if w >= 40 and h >= 40: 
                                         pick = im
                                         break
                                 if not pick:
@@ -914,7 +842,7 @@ async def retrieval_all_admins(
                                         "model_used": "json-inline"
                                     }
                                     break
-                            # 4. If no inline images, try page screenshot
+                          
                             if not chosen_image:
                                 try:
                                     prefix = _derive_image_prefix(target_file)
@@ -942,7 +870,7 @@ async def retrieval_all_admins(
                 except Exception as e:
                     print(f"[Image-JSON-Fallback-ERROR] {e}")
 
-            # 5. Absolute fallback: if we still have nothing, reuse highest-scoring image overall
+    
             if not chosen_image and all_images:
                 try:
                     all_images.sort(key=lambda x: float(x.get("score", 0) or 0.0), reverse=True)
@@ -957,7 +885,7 @@ async def retrieval_all_admins(
                 except Exception:
                     pass
 
-        # Prepare final response with single image
+     
         images = []
         if chosen_image:
             images = [{
@@ -967,7 +895,7 @@ async def retrieval_all_admins(
                 "page_number": chosen_image.get("page_number", 0)
             }]
 
-        # Generate LLM response
+      
         if not retrieved_text.strip():
             if images:
                 return {
@@ -1015,7 +943,7 @@ async def get_admin_indexes_from_db(db: AsyncSession) -> List[str]:
     Return a list of Pinecone index names (cleaned) that correspond to
     admin_name values in the Admin table *and* actually exist in Pinecone.
     """
-    pc = Pinecone(api_key=config.PINECONE_API_KEY)
+    pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
     existing = set(pc.list_indexes().names())
 
     res = await db.execute(select(Admin.admin_name))

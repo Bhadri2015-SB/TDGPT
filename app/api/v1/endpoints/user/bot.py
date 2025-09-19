@@ -1,6 +1,8 @@
 import uuid
+import os
+import re
 from fastapi import APIRouter, HTTPException, Depends, Request, Response, Header
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, validator
 from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -23,10 +25,10 @@ async def get_session_by_token(db: AsyncSession, token: str) -> Optional[BotSess
 def gatekeeper(session: Optional[BotSession]):
     if not session or not session.collected_name:
         return {"ask": "What's your name?"}
-    if not session.collected_email:
-        return {"ask": "What's your email?"}
+    if not session.collected_phone_number:
+        return {"ask": "What's your phone number?"}
     if session.state != "ready":
-        return {"ask": "Please complete name and email first."}
+        return {"ask": "Please complete name and phone number first."}
     return None
 
 def _resolve_session_token(request: Request, payload_token: Optional[str], x_session_token: Optional[str], authorization: Optional[str]) -> Optional[str]:
@@ -96,16 +98,31 @@ async def submit_name(
         raise HTTPException(status_code=400, detail="Please provide a valid name")
 
     session.collected_name = name_val
-    session.state = "ask_email"
+    session.state = "ask_phone"
     await db.commit()
-    return {"message": f"Hi {name_val}!", "ask": "What's your email?"}
+    return {"message": f"Hi {name_val}!", "ask": "What's your phone number?"}
 
-class EmailPayload(BaseModel):
-    email: EmailStr
+class PhoneNumberPayload(BaseModel):
+    phone_number: str
+    
+    @validator('phone_number')
+    def validate_phone_number(cls, v):
+        # Remove any spaces or special characters
+        cleaned = re.sub(r'[^0-9]', '', v)
+        
+        # Check if exactly 10 digits
+        if len(cleaned) != 10:
+            raise ValueError('Phone number must be exactly 10 digits')
+        
+        # Check if all characters are digits
+        if not cleaned.isdigit():
+            raise ValueError('Phone number must contain only digits')
+            
+        return cleaned
 
-@router.post("/email")
-async def submit_email(
-    payload: EmailPayload,
+@router.post("/phone")
+async def submit_phone_number(
+    payload: PhoneNumberPayload,
     request: Request,
     x_session_token: Optional[str] = Header(default=None, alias="X-Session-Token"),
     authorization: Optional[str] = Header(default=None),
@@ -116,18 +133,18 @@ async def submit_email(
     if not session or not session.collected_name:
         return {"message": "Please provide your name first!", "ask": "What's your name?"}
 
-    email_val = payload.email.strip().lower()
-    invalid = ["user@example.com","test@example.com","email@example.com","sample@example.com","demo@example.com","string@string.com","user@gmail.com"]
-    if email_val in invalid or "example.com" in email_val:
-        raise HTTPException(status_code=400, detail="Please provide a valid email address")
+    phone_val = payload.phone_number
+    invalid = ["1234567890", "0000000000", "1111111111", "2222222222", "3333333333", "4444444444", "5555555555", "6666666666", "7777777777", "8888888888", "9999999999"]
+    if phone_val in invalid:
+        raise HTTPException(status_code=400, detail="Please provide a valid phone number")
 
-    session.collected_email = email_val
+    session.collected_phone_number = phone_val
     session.state = "ready"
 
-    user_result = await db.execute(select(User).where(User.email == email_val))
+    user_result = await db.execute(select(User).where(User.phone_number == phone_val))
     user = user_result.scalar_one_or_none()
     if not user:
-        user = await create_user(db, username=session.collected_name, email=email_val, password="TempPass#123")
+        user = await create_user(db, username=session.collected_name, phone_number=phone_val, password="TempPass#123")
     else:
         user.username = session.collected_name
     session.user_id = user.id

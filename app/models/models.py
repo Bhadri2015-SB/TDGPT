@@ -30,7 +30,7 @@ class User(Base):
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     username = Column(String(150), nullable=False, unique=True)
-    email = Column(String(255), nullable=False, unique=True)
+    phone_number = Column(String(10), nullable=False, unique=True)
     password_hash = Column(String(255), nullable=False)
 
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -87,7 +87,7 @@ class BotSession(Base):
     state = Column(String(50), nullable=False, default="ask_name")
 
     collected_name = Column(String(150), nullable=True)
-    collected_email = Column(String(255), nullable=True)
+    collected_phone_number = Column(String(10), nullable=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())

@@ -66,16 +66,36 @@ async def startup_event():
     pc = Pinecone(api_key=pinecone_api_key)
     index_name = config.SHARED_PINECONE_INDEX
 
-    if index_name not in pc.list_indexes().names():
-        pc.create_index(
-            name=index_name,
-            dimension=384,
-            metric="cosine",
-            spec=ServerlessSpec(cloud="aws", region="us-east-1")
-        )
-        print(f"[Startup] Created Pinecone index: {index_name}")
-    else:
-        print(f"[Startup] Pinecone index '{index_name}' already exists.")
+    try:
+        existing_indexes = pc.list_indexes().names()
+        print(f"[Startup] Available Pinecone indexes: {existing_indexes}")
+        
+        if index_name not in existing_indexes:
+            print(f"[Startup] Index '{index_name}' not found. Attempting to create...")
+            try:
+                pc.create_index(
+                    name=index_name,
+                    dimension=384,
+                    metric="cosine",
+                    spec=ServerlessSpec(cloud="aws", region="us-east-1")
+                )
+                print(f"[Startup] Created Pinecone index: {index_name}")
+            except Exception as create_error:
+                print(f"[Startup] ⚠️  Could not create index '{index_name}': {create_error}")
+                if "max serverless indexes" in str(create_error).lower():
+                    print(f"[Startup] 💡 You have 5 indexes (limit reached). Available indexes: {existing_indexes}")
+                    print(f"[Startup] 💡 Please either:")
+                    print(f"[Startup]    1. Delete unused indexes, OR")
+                    print(f"[Startup]    2. Change SHARED_PINECONE_INDEX to an existing index name, OR") 
+                    print(f"[Startup]    3. Use namespaces within existing indexes")
+                    # Don't crash - continue with available indexes
+                else:
+                    raise create_error
+        else:
+            print(f"[Startup] Pinecone index '{index_name}' already exists.")
+    except Exception as pc_error:
+        print(f"[Startup] ❌ Pinecone connection error: {pc_error}")
+        print(f"[Startup] Application will continue but document ingestion may fail.")
 
 @app.on_event("shutdown")
 async def shutdown_event():

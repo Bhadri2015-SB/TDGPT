@@ -5,7 +5,6 @@ from typing import Optional
 
 import bcrypt
 from fastapi import Depends, HTTPException, Request, status
-from fastapi.security import OAuth2PasswordBearer
 from fastapi.security.utils import get_authorization_scheme_param
 from jose import JWTError, jwt
 from sqlalchemy import select
@@ -14,12 +13,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_db
 from app.models.models import User, Admin
 import app.core.config as settings
-
-
-
-oauth2_user_scheme = OAuth2PasswordBearer(tokenUrl="/user/auth/login")
-oauth2_admin_scheme = OAuth2PasswordBearer(tokenUrl="/admin/auth/login")
-
 
 
 SECRET_KEY = settings.SECRET_KEY
